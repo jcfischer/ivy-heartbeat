@@ -7,6 +7,7 @@ import { registerObserveCommand } from './commands/observe.ts';
 import { registerCheckCommand } from './commands/check.ts';
 import { registerScheduleCommand } from './commands/schedule.ts';
 import { registerSearchCommand } from './commands/search.ts';
+import { registerExportCommand } from './commands/export.ts';
 
 export interface CliContext {
   bb: Blackboard;
@@ -45,5 +46,6 @@ registerObserveCommand(program, getContext);
 registerCheckCommand(program, getContext);
 registerScheduleCommand(program, getContext);
 registerSearchCommand(program, getContext);
+registerExportCommand(program, getContext);
 
 program.parse();
