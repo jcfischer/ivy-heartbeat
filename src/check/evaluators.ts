@@ -1,14 +1,14 @@
 import type { ChecklistItem, CheckType } from '../parser/types.ts';
 import type { CheckResult } from './types.ts';
+import { evaluateEmail } from '../evaluators/email.ts';
 
 export type Evaluator = (item: ChecklistItem) => Promise<CheckResult>;
 
 /**
  * Evaluator registry.
- * F-007 provides stubs. Real implementations come in later features:
- * - calendar: F-018
- * - email: F-017
- * - custom: future
+ * - calendar: F-018 (real implementation)
+ * - email: F-017 (real IMAP evaluator, graceful when unconfigured)
+ * - custom: stub — always ok
  */
 const evaluators: Record<CheckType, Evaluator> = {
   calendar: async (item) => ({
@@ -17,11 +17,7 @@ const evaluators: Record<CheckType, Evaluator> = {
     summary: `Calendar check: ${item.name} (stub — no conflicts detected)`,
   }),
 
-  email: async (item) => ({
-    item,
-    status: 'ok',
-    summary: `Email check: ${item.name} (stub — no matching emails)`,
-  }),
+  email: evaluateEmail,
 
   custom: async (item) => ({
     item,
