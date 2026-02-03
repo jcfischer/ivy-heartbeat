@@ -16,6 +16,7 @@ export function registerObserveCommand(
     .option('--events', 'Show events')
     .option('--heartbeats', 'Show heartbeats')
     .option('--type <type>', 'Filter events by type')
+    .option('--credential', 'Show credential access/denial events')
     .option('--session <id>', 'Filter heartbeats by session ID')
     .option('--limit <n>', 'Max results', '20')
     .action((opts) => {
@@ -26,6 +27,37 @@ export function registerObserveCommand(
         // Default to showing events if neither flag is given
         const showEvents = opts.events || (!opts.events && !opts.heartbeats);
         const showHeartbeats = opts.heartbeats;
+
+        if (opts.credential) {
+          // Credential events are stored with credentialEvent: true in metadata
+          const allEvents = ctx.bb.eventQueries.getRecent(limit * 5);
+          const credEvents = allEvents.filter((e) => {
+            if (!e.metadata) return false;
+            const meta = typeof e.metadata === 'string' ? e.metadata : JSON.stringify(e.metadata);
+            return meta.includes('"credentialEvent":true') || meta.includes('"credentialEvent": true');
+          }).slice(0, limit);
+
+          if (ctx.json) {
+            console.log(formatJson(credEvents));
+          } else if (credEvents.length === 0) {
+            console.log('No credential events found.');
+          } else {
+            const headers = ['TIME', 'OUTCOME', 'SKILL', 'CREDENTIAL', 'SUMMARY'];
+            const rows = credEvents.map((e) => {
+              let meta: Record<string, unknown> = {};
+              try { meta = JSON.parse(typeof e.metadata === 'string' ? e.metadata : '{}'); } catch {}
+              return [
+                formatRelativeTime(e.timestamp),
+                String(meta.outcome ?? '-'),
+                String(meta.skill ?? '-'),
+                String(meta.credentialType ?? '-'),
+                truncate(e.summary, 50),
+              ];
+            });
+            console.log(formatTable(headers, rows));
+          }
+          return;
+        }
 
         if (showEvents) {
           const events = opts.type

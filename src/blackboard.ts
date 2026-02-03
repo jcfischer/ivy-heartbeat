@@ -103,3 +103,6 @@ export * from './parser/types.ts';
 export { HeartbeatQueryRepository } from './repositories/heartbeats.ts';
 export { EventQueryRepository, type ListOptions, type SearchResult } from './repositories/events.ts';
 export { setupFTS5, rebuildFTSIndex } from './fts.ts';
+export { logCredentialAccess, logCredentialDenied } from './credential/audit.ts';
+export { loadScopeConfig, isCredentialAllowed } from './credential/scope.ts';
+export type { CredentialAccessEvent, CredentialScopeConfig } from './credential/types.ts';
