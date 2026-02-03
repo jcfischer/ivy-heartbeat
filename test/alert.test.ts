@@ -82,7 +82,7 @@ describe('notifyEmail', () => {
 describe('dispatchAlert', () => {
   test('routes to terminal channel', async () => {
     const result = makeResult();
-    const dispatch = await dispatchAlert(result, ['terminal']);
+    const dispatch = await dispatchAlert(result, ['terminal'], { start: 0, end: 24 });
     // osascript should work on macOS
     expect(dispatch.delivered.length + dispatch.failed.length).toBe(1);
     expect(dispatch.suppressed.length).toBe(0);
@@ -90,7 +90,7 @@ describe('dispatchAlert', () => {
 
   test('email stub results in failed delivery', async () => {
     const result = makeResult();
-    const dispatch = await dispatchAlert(result, ['email']);
+    const dispatch = await dispatchAlert(result, ['email'], { start: 0, end: 24 });
     expect(dispatch.failed.length).toBe(1);
     expect(dispatch.failed[0].channel).toBe('email');
     expect(dispatch.delivered).not.toContain('email');
@@ -98,7 +98,7 @@ describe('dispatchAlert', () => {
 
   test('multiple channels fire independently', async () => {
     const result = makeResult();
-    const dispatch = await dispatchAlert(result, ['terminal', 'email']);
+    const dispatch = await dispatchAlert(result, ['terminal', 'email'], { start: 0, end: 24 });
     // Both attempted: terminal may succeed, email always fails
     const total = dispatch.delivered.length + dispatch.failed.length;
     expect(total).toBe(2);
