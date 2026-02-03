@@ -16,6 +16,7 @@ import {
 } from 'ivy-blackboard/src/agent';
 import { HeartbeatQueryRepository } from './repositories/heartbeats.ts';
 import { EventQueryRepository } from './repositories/events.ts';
+import { setupFTS5 } from './fts.ts';
 
 /**
  * Ivy Heartbeat's interface to the blackboard.
@@ -31,6 +32,7 @@ export class Blackboard {
   constructor(dbPath?: string) {
     const resolved = dbPath ?? resolveDbPath();
     this.db = openDatabase(resolved);
+    setupFTS5(this.db);
     this.heartbeatQueries = new HeartbeatQueryRepository(this.db);
     this.eventQueries = new EventQueryRepository(this.db);
   }
@@ -99,4 +101,5 @@ export type {
 
 export * from './parser/types.ts';
 export { HeartbeatQueryRepository } from './repositories/heartbeats.ts';
-export { EventQueryRepository, type ListOptions } from './repositories/events.ts';
+export { EventQueryRepository, type ListOptions, type SearchResult } from './repositories/events.ts';
+export { setupFTS5, rebuildFTSIndex } from './fts.ts';

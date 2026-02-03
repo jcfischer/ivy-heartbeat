@@ -10,11 +10,50 @@ export interface ListOptions {
  * Read-only query repository for events.
  * Writing is handled by Blackboard.appendEvent() or ivy-blackboard's agent functions.
  */
+export interface SearchResult {
+  event: BlackboardEvent;
+  rank: number;
+}
+
 export class EventQueryRepository {
   private readonly db: Database;
 
   constructor(db: Database) {
     this.db = db;
+  }
+
+  /**
+   * Full-text search across events summary and metadata using FTS5.
+   * Returns matching events ranked by relevance (lower rank = better match).
+   */
+  search(query: string, opts?: ListOptions): SearchResult[] {
+    const limit = opts?.limit ? `LIMIT ${opts.limit}` : 'LIMIT 50';
+    const sinceClause = opts?.since ? `AND e.timestamp > '${opts.since}'` : '';
+
+    const sql = `
+      SELECT e.*, fts.rank
+      FROM events_fts fts
+      JOIN events e ON e.id = fts.rowid
+      WHERE events_fts MATCH ?
+      ${sinceClause}
+      ORDER BY fts.rank
+      ${limit}
+    `;
+
+    const rows = this.db.prepare(sql).all(query) as (BlackboardEvent & { rank: number })[];
+    return rows.map((row) => ({
+      event: {
+        id: row.id,
+        timestamp: row.timestamp,
+        event_type: row.event_type,
+        actor_id: row.actor_id,
+        target_id: row.target_id,
+        target_type: row.target_type,
+        summary: row.summary,
+        metadata: row.metadata,
+      } as BlackboardEvent,
+      rank: row.rank,
+    }));
   }
 
   /**
