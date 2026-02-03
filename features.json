@@ -1,0 +1,128 @@
+[
+  {
+    "id": "F-001",
+    "name": "Blackboard TypeScript library",
+    "description": "Core SQLite library with WAL mode, schema initialization, and typed CRUD operations for agents, projects, work_items, heartbeats, and events tables. Dual-location resolution (~/.pai/blackboard/local.db and .blackboard/local.db).",
+    "dependencies": [],
+    "priority": 1
+  },
+  {
+    "id": "F-002",
+    "name": "Blackboard agent registration CLI",
+    "description": "CLI commands: blackboard agent register, deregister, heartbeat, list. Agents register on start with PID, update last_seen_at on heartbeat, and deregister on clean exit.",
+    "dependencies": ["F-001"],
+    "priority": 2
+  },
+  {
+    "id": "F-003",
+    "name": "Blackboard events append and query",
+    "description": "CLI commands: blackboard observe (with --events, --since, --type, --agent, --limit filters). Append-only event logging with typed event_types. Cursor-based 'since last check' for agents.",
+    "dependencies": ["F-001"],
+    "priority": 2
+  },
+  {
+    "id": "F-004",
+    "name": "Blackboard work items CRUD",
+    "description": "CLI commands: blackboard work claim, release, complete, list, status. Work items with source (github/local/operator), priority, and claiming protocol. Stale lock detection via PID check.",
+    "dependencies": ["F-001", "F-002"],
+    "priority": 3
+  },
+  {
+    "id": "F-005",
+    "name": "Blackboard project registration",
+    "description": "CLI commands: blackboard project register, list, status. Links projects to local paths and remote repos. Shows active agents and work items per project.",
+    "dependencies": ["F-001"],
+    "priority": 3
+  },
+  {
+    "id": "F-006",
+    "name": "IVY_HEARTBEAT.md parser",
+    "description": "Parse heartbeat checklist configuration from ~/.pai/IVY_HEARTBEAT.md. Support YAML-based checklist items with check type (calendar, email, custom), severity, and enabled/disabled state.",
+    "dependencies": [],
+    "priority": 4
+  },
+  {
+    "id": "F-007",
+    "name": "Sentinel heartbeat command",
+    "description": "Extend Sentinel skill with 'heartbeat check' subcommand. Registers as agent in blackboard, reads checklist, evaluates items, writes results to heartbeats and events tables, deregisters on exit.",
+    "dependencies": ["F-001", "F-002", "F-003", "F-006"],
+    "priority": 5
+  },
+  {
+    "id": "F-008",
+    "name": "Heartbeat cost guard",
+    "description": "Hash-based change detection for IVY_HEARTBEAT.md. Skip API call if checklist unchanged since last check. Log skip as heartbeat_skipped event with saved cost estimate.",
+    "dependencies": ["F-007"],
+    "priority": 6
+  },
+  {
+    "id": "F-009",
+    "name": "Heartbeat alert delivery",
+    "description": "Dispatch alerts via voice server (existing), macOS terminal notification, and optional email (SMTP). Configurable per-item delivery channels. Active hours enforcement from settings.json timezone.",
+    "dependencies": ["F-007"],
+    "priority": 6
+  },
+  {
+    "id": "F-010",
+    "name": "launchd plist for heartbeat",
+    "description": "Generate and install launchd plist for periodic heartbeat execution. Configurable interval (default 1hr). Install/uninstall commands. Active hours via launchd StartCalendarInterval.",
+    "dependencies": ["F-007"],
+    "priority": 7
+  },
+  {
+    "id": "F-011",
+    "name": "FTS5 virtual table on events",
+    "description": "Add FTS5 virtual table (events_fts) on events.summary and metadata columns. Sync triggers for insert/delete. CLI command: blackboard observe --fts 'search query'. Sub-100ms search.",
+    "dependencies": ["F-003"],
+    "priority": 8
+  },
+  {
+    "id": "F-012",
+    "name": "Post-session hook",
+    "description": "Hook at ~/.claude/hooks/post-session that fires after each Claude Code session. Reads session transcript, extracts facts and patterns using haiku, writes session_started/session_activity/session_ended/fact_extracted/pattern_detected events to blackboard.",
+    "dependencies": ["F-001", "F-003"],
+    "priority": 9
+  },
+  {
+    "id": "F-013",
+    "name": "Daily log export",
+    "description": "CLI command: blackboard export --daily-log --date YYYY-MM-DD. Generates Markdown daily log from events table (sessions, facts, patterns, costs). On-demand generation, not flat-file storage.",
+    "dependencies": ["F-003", "F-012"],
+    "priority": 10
+  },
+  {
+    "id": "F-014",
+    "name": "Blackboard observe CLI dashboard",
+    "description": "Rich CLI output for blackboard observe: --heartbeats (last/next check, cost), --since (what happened while away), --aggregate cost (daily/weekly breakdown), --agent (filter by agent). Formatted tables and summaries.",
+    "dependencies": ["F-003", "F-007", "F-011"],
+    "priority": 11
+  },
+  {
+    "id": "F-015",
+    "name": "Blackboard serve web dashboard",
+    "description": "Bun HTTP server at localhost:7878. Static HTML dashboard with: real-time agent status, heartbeat timeline, event stream, cost charts, FTS5 search interface, session explorer. Localhost-only binding.",
+    "dependencies": ["F-001", "F-003", "F-011"],
+    "priority": 12
+  },
+  {
+    "id": "F-016",
+    "name": "Credential audit trail",
+    "description": "Instrument MCP credential access to log credential_accessed and credential_denied events. Per-skill scoping config in settings.json. CLI query: blackboard observe --type credential_accessed.",
+    "dependencies": ["F-003"],
+    "priority": 13
+  },
+  {
+    "id": "F-017",
+    "name": "Email digest adapter",
+    "description": "Nightly email digest: fetch unread emails via IMAP, filter by sender/subject relevance, create work_items with source='email' in blackboard. Content filtering via pai-content-filter before insertion. No bidirectional email.",
+    "dependencies": ["F-001", "F-004"],
+    "priority": 14
+  },
+  {
+    "id": "F-018",
+    "name": "Calendar awareness adapter",
+    "description": "Calendar-aware heartbeat checklist item: read upcoming meetings from macOS Calendar, create work_items with source='calendar' for prep notes and conflict detection. No bidirectional calendar modification.",
+    "dependencies": ["F-001", "F-004", "F-007"],
+    "priority": 15
+  }
+]
