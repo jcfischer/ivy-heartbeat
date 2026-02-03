@@ -1,6 +1,7 @@
 import type { ChecklistItem, CheckType } from '../parser/types.ts';
 import type { CheckResult } from './types.ts';
 import { evaluateEmail } from '../evaluators/email.ts';
+import { evaluateCalendar } from '../evaluators/calendar.ts';
 
 export type Evaluator = (item: ChecklistItem) => Promise<CheckResult>;
 
@@ -11,11 +12,7 @@ export type Evaluator = (item: ChecklistItem) => Promise<CheckResult>;
  * - custom: stub — always ok
  */
 const evaluators: Record<CheckType, Evaluator> = {
-  calendar: async (item) => ({
-    item,
-    status: 'ok',
-    summary: `Calendar check: ${item.name} (stub — no conflicts detected)`,
-  }),
+  calendar: evaluateCalendar,
 
   email: evaluateEmail,
 
