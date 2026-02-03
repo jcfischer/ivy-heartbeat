@@ -5,6 +5,7 @@ import {
   formatTable,
   formatRelativeTime,
 } from 'ivy-blackboard/src/output';
+import { generateSummary, formatSummaryText } from '../observe/summary.ts';
 
 export function registerObserveCommand(
   parent: Command,
@@ -18,18 +19,28 @@ export function registerObserveCommand(
     .option('--type <type>', 'Filter events by type')
     .option('--credential', 'Show credential access/denial events')
     .option('--session <id>', 'Filter heartbeats by session ID')
+    .option('--since <iso>', 'Show events since ISO timestamp')
+    .option('--agent <id>', 'Filter events by agent/actor ID')
+    .option('--summary', 'Show aggregate dashboard summary')
     .option('--limit <n>', 'Max results', '20')
     .action((opts) => {
       try {
         const ctx = getContext();
         const limit = parseInt(opts.limit, 10);
 
-        // Default to showing events if neither flag is given
-        const showEvents = opts.events || (!opts.events && !opts.heartbeats);
-        const showHeartbeats = opts.heartbeats;
+        // Summary dashboard view
+        if (opts.summary) {
+          const summary = generateSummary(ctx.bb);
+          if (ctx.json) {
+            console.log(formatJson(summary));
+          } else {
+            console.log(formatSummaryText(summary));
+          }
+          return;
+        }
 
+        // Credential events view
         if (opts.credential) {
-          // Credential events are stored with credentialEvent: true in metadata
           const allEvents = ctx.bb.eventQueries.getRecent(limit * 5);
           const credEvents = allEvents.filter((e) => {
             if (!e.metadata) return false;
@@ -59,16 +70,33 @@ export function registerObserveCommand(
           return;
         }
 
+        // Default to showing events if neither flag is given
+        const showEvents = opts.events || (!opts.events && !opts.heartbeats);
+        const showHeartbeats = opts.heartbeats;
+
         if (showEvents) {
-          const events = opts.type
-            ? ctx.bb.eventQueries.getByType(opts.type, { limit })
-            : ctx.bb.eventQueries.getRecent(limit);
+          let events;
+          if (opts.agent) {
+            events = ctx.bb.eventQueries.getByActor(opts.agent, {
+              limit,
+              since: opts.since,
+            });
+          } else if (opts.since) {
+            events = ctx.bb.eventQueries.getSince(opts.since).slice(0, limit);
+          } else if (opts.type) {
+            events = ctx.bb.eventQueries.getByType(opts.type, { limit });
+          } else {
+            events = ctx.bb.eventQueries.getRecent(limit);
+          }
 
           if (ctx.json) {
             console.log(formatJson(events));
           } else if (events.length === 0) {
             console.log('No events found.');
           } else {
+            if (opts.since) {
+              console.log(`${events.length} event(s) since ${opts.since}:\n`);
+            }
             const headers = ['TIME', 'TYPE', 'ACTOR', 'SUMMARY'];
             const rows = events.map((e) => [
               formatRelativeTime(e.timestamp),
