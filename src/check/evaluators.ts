@@ -3,14 +3,12 @@ import type { CheckResult } from './types.ts';
 import { evaluateEmail } from '../evaluators/email.ts';
 import { evaluateCalendar } from '../evaluators/calendar.ts';
 import { evaluateGithubIssues } from '../evaluators/github-issues.ts';
+import { evaluateAgentDispatch } from '../evaluators/agent-dispatch.ts';
 
 export type Evaluator = (item: ChecklistItem) => Promise<CheckResult>;
 
 /**
  * Evaluator registry.
- * - calendar: F-018 (real implementation)
- * - email: F-017 (real IMAP evaluator, graceful when unconfigured)
- * - custom: stub — always ok
  */
 const evaluators: Record<CheckType, Evaluator> = {
   calendar: evaluateCalendar,
@@ -18,6 +16,8 @@ const evaluators: Record<CheckType, Evaluator> = {
   email: evaluateEmail,
 
   github_issues: evaluateGithubIssues,
+
+  agent_dispatch: evaluateAgentDispatch,
 
   custom: async (item) => ({
     item,

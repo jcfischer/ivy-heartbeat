@@ -5,6 +5,7 @@ import { getEvaluator } from './evaluators.ts';
 import { computeChecklistHash, shouldSkip } from './guard.ts';
 import { dispatchAlert } from '../alert/dispatcher.ts';
 import { setBlackboardAccessor, resetBlackboardAccessor } from '../evaluators/github-issues.ts';
+import { setDispatchBlackboard, resetDispatchBlackboard } from '../evaluators/agent-dispatch.ts';
 import type {
   CheckOptions,
   CheckResult,
@@ -80,8 +81,9 @@ export async function runChecks(
     }
   }
 
-  // Make blackboard available to evaluators that need it (e.g. github_issues)
+  // Make blackboard available to evaluators that need it
   setBlackboardAccessor(bb);
+  setDispatchBlackboard(bb);
 
   const results: CheckResult[] = [];
   let alerts = 0;
@@ -150,6 +152,7 @@ export async function runChecks(
   }
 
   resetBlackboardAccessor();
+  resetDispatchBlackboard();
 
   return {
     timestamp: new Date().toISOString(),
