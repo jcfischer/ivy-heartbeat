@@ -17,13 +17,132 @@ export function logPathForSession(sessionId: string): string {
 }
 
 /**
- * Stream a ReadableStream to both a string accumulator and a log file.
- * Writes to the file incrementally as chunks arrive.
+ * Format a stream-json message into a human-readable log line.
+ * Returns null for messages that shouldn't be logged.
  */
-async function streamToFileAndString(
+function formatStreamMessage(msg: any): string | null {
+  switch (msg.type) {
+    case 'assistant': {
+      // Assistant text message
+      const text = msg.message?.content
+        ?.filter((c: any) => c.type === 'text')
+        .map((c: any) => c.text)
+        .join('') ?? '';
+      if (!text) return null;
+      return text;
+    }
+    case 'tool_use': {
+      const name = msg.tool?.name ?? msg.name ?? 'unknown';
+      const input = msg.tool?.input ?? msg.input;
+      // Summarize tool invocations concisely
+      if (name === 'Bash') {
+        const cmd = input?.command ?? '';
+        return `[tool] Bash: ${cmd.slice(0, 200)}`;
+      }
+      if (name === 'Read') {
+        return `[tool] Read: ${input?.file_path ?? ''}`;
+      }
+      if (name === 'Write') {
+        return `[tool] Write: ${input?.file_path ?? ''}`;
+      }
+      if (name === 'Edit') {
+        return `[tool] Edit: ${input?.file_path ?? ''}`;
+      }
+      if (name === 'Glob') {
+        return `[tool] Glob: ${input?.pattern ?? ''}`;
+      }
+      if (name === 'Grep') {
+        return `[tool] Grep: ${input?.pattern ?? ''}`;
+      }
+      if (name === 'Task') {
+        return `[tool] Task: ${input?.description ?? ''}`;
+      }
+      return `[tool] ${name}`;
+    }
+    case 'tool_result': {
+      // Log errors, skip successful results (too verbose)
+      if (msg.is_error || msg.error) {
+        const errText = msg.content ?? msg.error ?? 'unknown error';
+        return `[tool:error] ${String(errText).slice(0, 300)}`;
+      }
+      return null;
+    }
+    case 'result': {
+      // Final result summary
+      const text = msg.result ?? '';
+      if (!text) return null;
+      return `\n--- RESULT ---\n${text}`;
+    }
+    case 'system':
+      return `[system] ${msg.message ?? ''}`;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Stream stdout from `claude --print --output-format stream-json`,
+ * parse each JSON message, and write human-readable lines to the log file.
+ * Returns the full raw output for the LaunchResult.
+ */
+async function streamJsonToLog(
   stream: ReadableStream<Uint8Array>,
-  logPath: string,
-  prefix: string
+  logPath: string
+): Promise<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    const text = decoder.decode(value, { stream: true });
+    chunks.push(text);
+    buffer += text;
+
+    // Process complete lines (each stream-json message is one line)
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? ''; // Keep incomplete last line in buffer
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const msg = JSON.parse(line);
+        const formatted = formatStreamMessage(msg);
+        if (formatted) {
+          appendFileSync(logPath, formatted + '\n');
+        }
+      } catch {
+        // Not valid JSON — write raw line
+        if (line.trim().length > 0) {
+          appendFileSync(logPath, line + '\n');
+        }
+      }
+    }
+  }
+
+  // Flush remaining buffer
+  if (buffer.trim()) {
+    try {
+      const msg = JSON.parse(buffer);
+      const formatted = formatStreamMessage(msg);
+      if (formatted) appendFileSync(logPath, formatted + '\n');
+    } catch {
+      appendFileSync(logPath, buffer + '\n');
+    }
+  }
+
+  return chunks.join('');
+}
+
+/**
+ * Stream stderr lines to the log file with a prefix.
+ */
+async function streamStderrToLog(
+  stream: ReadableStream<Uint8Array>,
+  logPath: string
 ): Promise<string> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
@@ -36,25 +155,23 @@ async function streamToFileAndString(
     const text = decoder.decode(value, { stream: true });
     chunks.push(text);
 
-    // Append to log file incrementally
     try {
       const lines = text.split('\n');
       for (const line of lines) {
         if (line.length > 0) {
-          appendFileSync(logPath, `${prefix}${line}\n`);
+          appendFileSync(logPath, `[stderr] ${line}\n`);
         }
       }
-    } catch {
-      // Best effort — don't fail the launch if logging fails
-    }
+    } catch {}
   }
 
   return chunks.join('');
 }
 
 /**
- * Default launcher: spawns `claude --print` in the project directory.
- * Streams stdout/stderr to a log file in real-time.
+ * Default launcher: spawns `claude --print --output-format stream-json`
+ * in the project directory. Parses streaming JSON into human-readable
+ * log lines written incrementally to a log file.
  */
 async function defaultLauncher(opts: LaunchOptions): Promise<LaunchResult> {
   // Ensure log directory exists
@@ -77,7 +194,7 @@ async function defaultLauncher(opts: LaunchOptions): Promise<LaunchResult> {
   ].join('\n'));
 
   const proc = Bun.spawn(
-    ['claude', '--print', '--verbose', opts.prompt],
+    ['claude', '--print', '--output-format', 'stream-json', opts.prompt],
     {
       cwd: opts.workDir,
       stdout: 'pipe',
@@ -92,10 +209,10 @@ async function defaultLauncher(opts: LaunchOptions): Promise<LaunchResult> {
     proc.kill('SIGTERM');
   }, opts.timeoutMs);
 
-  // Stream stdout and stderr to log file in parallel
+  // Stream stdout (JSON) and stderr to log file in parallel
   const [stdout, stderr] = await Promise.all([
-    streamToFileAndString(proc.stdout as ReadableStream<Uint8Array>, logPath, ''),
-    streamToFileAndString(proc.stderr as ReadableStream<Uint8Array>, logPath, '[stderr] '),
+    streamJsonToLog(proc.stdout as ReadableStream<Uint8Array>, logPath),
+    streamStderrToLog(proc.stderr as ReadableStream<Uint8Array>, logPath),
   ]);
 
   const exitCode = await proc.exited;
