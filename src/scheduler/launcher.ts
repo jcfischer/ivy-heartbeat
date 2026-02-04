@@ -194,7 +194,7 @@ async function defaultLauncher(opts: LaunchOptions): Promise<LaunchResult> {
   ].join('\n'));
 
   const proc = Bun.spawn(
-    ['claude', '--print', '--output-format', 'stream-json', opts.prompt],
+    ['claude', '--print', '--verbose', '--output-format', 'stream-json', opts.prompt],
     {
       cwd: opts.workDir,
       stdout: 'pipe',
