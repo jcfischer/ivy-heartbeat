@@ -17,64 +17,69 @@ export function logPathForSession(sessionId: string): string {
 }
 
 /**
- * Format a stream-json message into a human-readable log line.
+ * Summarize a tool_use content block into a concise log line.
+ */
+function formatToolUse(block: any): string {
+  const name = block.name ?? 'unknown';
+  const input = block.input ?? {};
+  switch (name) {
+    case 'Bash': return `[tool] Bash: ${(input.command ?? '').slice(0, 200)}`;
+    case 'Read': return `[tool] Read: ${input.file_path ?? ''}`;
+    case 'Write': return `[tool] Write: ${input.file_path ?? ''}`;
+    case 'Edit': return `[tool] Edit: ${input.file_path ?? ''}`;
+    case 'Glob': return `[tool] Glob: ${input.pattern ?? ''}`;
+    case 'Grep': return `[tool] Grep: ${input.pattern ?? ''}`;
+    case 'Task': return `[tool] Task: ${input.description ?? ''}`;
+    default: return `[tool] ${name}`;
+  }
+}
+
+/**
+ * Format a stream-json message into human-readable log lines.
  * Returns null for messages that shouldn't be logged.
+ *
+ * Stream-json message types:
+ * - system: {subtype: "init"|"hook_started"|"hook_response", ...}
+ * - assistant: {message: {content: [{type:"text",text:...}, {type:"tool_use",name:...,input:...}]}}
+ * - tool_result: {content: [{type:"text",text:...}], is_error?: boolean}
+ * - result: {subtype: "success"|"error", result?: string}
  */
 function formatStreamMessage(msg: any): string | null {
   switch (msg.type) {
     case 'assistant': {
-      // Assistant text message
-      const text = msg.message?.content
-        ?.filter((c: any) => c.type === 'text')
-        .map((c: any) => c.text)
-        .join('') ?? '';
-      if (!text) return null;
-      return text;
-    }
-    case 'tool_use': {
-      const name = msg.tool?.name ?? msg.name ?? 'unknown';
-      const input = msg.tool?.input ?? msg.input;
-      // Summarize tool invocations concisely
-      if (name === 'Bash') {
-        const cmd = input?.command ?? '';
-        return `[tool] Bash: ${cmd.slice(0, 200)}`;
+      const content = msg.message?.content ?? [];
+      const parts: string[] = [];
+
+      for (const block of content) {
+        if (block.type === 'text' && block.text) {
+          parts.push(block.text);
+        } else if (block.type === 'tool_use') {
+          parts.push(formatToolUse(block));
+        }
       }
-      if (name === 'Read') {
-        return `[tool] Read: ${input?.file_path ?? ''}`;
-      }
-      if (name === 'Write') {
-        return `[tool] Write: ${input?.file_path ?? ''}`;
-      }
-      if (name === 'Edit') {
-        return `[tool] Edit: ${input?.file_path ?? ''}`;
-      }
-      if (name === 'Glob') {
-        return `[tool] Glob: ${input?.pattern ?? ''}`;
-      }
-      if (name === 'Grep') {
-        return `[tool] Grep: ${input?.pattern ?? ''}`;
-      }
-      if (name === 'Task') {
-        return `[tool] Task: ${input?.description ?? ''}`;
-      }
-      return `[tool] ${name}`;
+
+      return parts.length > 0 ? parts.join('\n') : null;
     }
     case 'tool_result': {
-      // Log errors, skip successful results (too verbose)
-      if (msg.is_error || msg.error) {
-        const errText = msg.content ?? msg.error ?? 'unknown error';
-        return `[tool:error] ${String(errText).slice(0, 300)}`;
+      // Log errors; skip successful results (too verbose)
+      if (msg.is_error) {
+        const text = Array.isArray(msg.content)
+          ? msg.content.map((c: any) => c.text ?? '').join('')
+          : String(msg.content ?? 'unknown error');
+        return `[tool:error] ${text.slice(0, 300)}`;
       }
       return null;
     }
     case 'result': {
-      // Final result summary
       const text = msg.result ?? '';
       if (!text) return null;
       return `\n--- RESULT ---\n${text}`;
     }
-    case 'system':
-      return `[system] ${msg.message ?? ''}`;
+    case 'system': {
+      // Skip hook lifecycle noise; only log init
+      if (msg.subtype === 'init') return '[system] Session initialized';
+      return null;
+    }
     default:
       return null;
   }
