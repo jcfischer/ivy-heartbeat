@@ -219,6 +219,38 @@ export async function createPR(
   return { number: result.number, url: result.url };
 }
 
+// ─── Post-agent merge & sync ──────────────────────────────────────────────
+
+/**
+ * Squash-merge a pull request via gh CLI.
+ * Returns true if the merge succeeded, false otherwise (non-fatal).
+ */
+export async function mergePR(
+  worktreePath: string,
+  prNumber: number
+): Promise<boolean> {
+  try {
+    await gh(
+      ['pr', 'merge', String(prNumber), '--squash', '--delete-branch'],
+      worktreePath
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Pull latest changes into the main repo from origin.
+ * Used after merging a PR so the local main branch stays in sync.
+ */
+export async function pullMain(
+  projectPath: string,
+  branch: string
+): Promise<void> {
+  await git(['pull', 'origin', branch], projectPath);
+}
+
 // ─── Post-agent issue comment support ─────────────────────────────────────
 
 /**

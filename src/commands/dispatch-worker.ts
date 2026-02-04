@@ -9,6 +9,8 @@ import {
   commitAll,
   pushBranch,
   createPR,
+  mergePR,
+  pullMain,
   getDiffSummary,
   buildCommentPrompt,
 } from '../scheduler/worktree.ts';
@@ -22,6 +24,7 @@ function parseGithubMeta(metadata: string | null): {
   repo?: string;
   author?: string;
   issueBody?: string;
+  humanReviewRequired?: boolean;
 } {
   if (!metadata) return { isGithub: false };
   try {
@@ -32,6 +35,7 @@ function parseGithubMeta(metadata: string | null): {
         issueNumber: parsed.github_issue_number,
         repo: parsed.github_repo,
         author: parsed.author,
+        humanReviewRequired: parsed.human_review_required !== false,
       };
     }
   } catch {
@@ -228,6 +232,55 @@ export function registerDispatchWorkerCommand(
                   summary: `Created PR #${pr.number} for "${item.title}"`,
                   metadata: { prNumber: pr.number, prUrl: pr.url, commitSha: sha },
                 });
+
+                // Auto-merge for trusted contributors (non-fatal)
+                if (!ghMeta.humanReviewRequired) {
+                  try {
+                    const merged = await mergePR(worktreePath, pr.number);
+                    if (merged) {
+                      bb.appendEvent({
+                        actorId: sessionId,
+                        targetId: itemId,
+                        summary: `Auto-merged PR #${pr.number} (squash) for "${item.title}"`,
+                        metadata: { prNumber: pr.number, autoMerge: true },
+                      });
+
+                      // Pull merged changes into main repo
+                      try {
+                        await pullMain(project.local_path, mainBranch);
+                        bb.appendEvent({
+                          actorId: sessionId,
+                          targetId: itemId,
+                          summary: `Pulled merged changes into ${project.local_path}`,
+                          metadata: { mainBranch, pullAfterMerge: true },
+                        });
+                      } catch (pullErr: unknown) {
+                        const pullMsg = pullErr instanceof Error ? pullErr.message : String(pullErr);
+                        bb.appendEvent({
+                          actorId: sessionId,
+                          targetId: itemId,
+                          summary: `Pull after merge failed (non-fatal): ${pullMsg}`,
+                          metadata: { error: pullMsg },
+                        });
+                      }
+                    } else {
+                      bb.appendEvent({
+                        actorId: sessionId,
+                        targetId: itemId,
+                        summary: `Auto-merge failed for PR #${pr.number} — left open for manual review`,
+                        metadata: { prNumber: pr.number, autoMerge: false },
+                      });
+                    }
+                  } catch (mergeErr: unknown) {
+                    const mergeMsg = mergeErr instanceof Error ? mergeErr.message : String(mergeErr);
+                    bb.appendEvent({
+                      actorId: sessionId,
+                      targetId: itemId,
+                      summary: `Auto-merge error for PR #${pr.number} (non-fatal): ${mergeMsg}`,
+                      metadata: { prNumber: pr.number, error: mergeMsg },
+                    });
+                  }
+                }
 
                 // Launch commenter agent to post on the issue (non-fatal)
                 try {
