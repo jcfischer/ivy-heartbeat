@@ -6,3 +6,7 @@ node_modules/
 .DS_Store
 .specflow/*.db
 dist/
+*.bun-build
+.claude-checkpoint.md
+.cursor/
+ivy-heartbeat
