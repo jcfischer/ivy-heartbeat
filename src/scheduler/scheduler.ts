@@ -9,11 +9,13 @@ import type {
 } from './types.ts';
 
 /**
- * Count currently active agents (active or idle) on the blackboard.
+ * Count currently active dispatch agents (active or idle) on the blackboard.
+ * Excludes the heartbeat orchestrator agent (name='ivy-heartbeat') which
+ * runs checks but is not a work-processing agent.
  */
 function countActiveAgents(bb: Blackboard): number {
   const row = bb.db
-    .query("SELECT COUNT(*) as count FROM agents WHERE status IN ('active', 'idle')")
+    .query("SELECT COUNT(*) as count FROM agents WHERE status IN ('active', 'idle') AND agent_name != 'ivy-heartbeat'")
     .get() as { count: number };
   return row.count;
 }
