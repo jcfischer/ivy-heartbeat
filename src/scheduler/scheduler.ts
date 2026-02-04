@@ -343,7 +343,7 @@ export async function dispatch(
             result.skipped.push({
               itemId: item.item_id,
               title: item.title,
-              reason: 'main branch has uncommitted changes',
+              reason: `main branch has uncommitted changes in ${project.local_path} — commit or stash to unblock dispatch`,
             });
             bb.releaseWorkItem(item.item_id, sessionId);
             bb.deregisterAgent(sessionId);

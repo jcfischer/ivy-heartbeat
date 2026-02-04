@@ -145,7 +145,7 @@ export function registerDispatchWorkerCommand(
             bb.appendEvent({
               actorId: sessionId,
               targetId: itemId,
-              summary: `Skipping "${item.title}": main branch has uncommitted changes`,
+              summary: `Skipping "${item.title}": main branch has uncommitted changes in ${project.local_path} — commit or stash to unblock dispatch`,
             });
             try { bb.releaseWorkItem(itemId, sessionId); } catch { /* best effort */ }
             try { bb.deregisterAgent(sessionId); } catch { /* best effort */ }
