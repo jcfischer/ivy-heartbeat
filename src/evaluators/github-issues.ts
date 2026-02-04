@@ -279,7 +279,10 @@ export async function evaluateGithubIssues(item: ChecklistItem): Promise<CheckRe
           // Fail-open: if the content filter itself errors, allow the content
           filterResult = { decision: 'ALLOWED', matches: [] };
         }
-        const contentBlocked = filterResult.decision === 'BLOCKED';
+        // Only hard-block when injection patterns matched (not encoding-only false positives)
+        const hasPatternMatches = filterResult.matches.length > 0;
+        const contentBlocked = filterResult.decision === 'BLOCKED' && hasPatternMatches;
+        const contentWarning = filterResult.decision === 'BLOCKED' && !hasPatternMatches;
 
         const descriptionParts = [
           `GitHub Issue #${issue.number}: ${issue.title}`,
@@ -292,11 +295,18 @@ export async function evaluateGithubIssues(item: ChecklistItem): Promise<CheckRe
           descriptionParts.push(
             '',
             '## ⚠ Content Blocked',
-            'Issue body was blocked by content filter (possible prompt injection).',
-            `Matched patterns: ${filterResult.matches.map((m) => m.pattern_id).join(', ') || 'encoding/schema'}`,
+            'Issue body was blocked by content filter (prompt injection detected).',
+            `Matched patterns: ${filterResult.matches.map((m) => m.pattern_id).join(', ')}`,
             'Review the issue manually before acting on it.',
           );
         } else if (issue.body) {
+          if (contentWarning) {
+            descriptionParts.push(
+              '',
+              '## ⚠ Content Warning',
+              'Content filter flagged encoding anomalies (no injection patterns matched). Body included for review.',
+            );
+          }
           descriptionParts.push(
             '',
             '## Issue Details',
@@ -331,6 +341,7 @@ export async function evaluateGithubIssues(item: ChecklistItem): Promise<CheckRe
               auto_push: isOwner,
               content_filtered: true,
               content_blocked: contentBlocked,
+              content_warning: contentWarning,
               filter_matches: filterResult.matches.map((m) => m.pattern_id),
             }),
           });

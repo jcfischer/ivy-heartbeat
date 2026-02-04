@@ -51,6 +51,8 @@ const FILTER_BLOCK: ContentFilterResult = {
   decision: 'BLOCKED',
   matches: [{ pattern_id: 'PI-001', pattern_name: 'system_prompt_override', matched_text: 'ignore previous instructions' }],
 };
+// Encoding-only block (no pattern matches) — should warn but still include body
+const FILTER_ENCODING_ONLY: ContentFilterResult = { decision: 'BLOCKED', matches: [] };
 
 describe('parseGithubIssuesConfig', () => {
   test('returns defaults for empty config', () => {
@@ -435,6 +437,33 @@ describe('evaluateGithubIssues', () => {
     expect(metadata.content_filtered).toBe(true);
     expect(metadata.content_blocked).toBe(false);
     expect(metadata.filter_matches).toEqual([]);
+  });
+
+  test('encoding-only block includes body with warning', async () => {
+    const issues = [
+      makeIssue({
+        number: 25,
+        title: 'Code in issue body',
+        url: 'https://github.com/owner/test-project/issues/25',
+        body: 'Call updateWorkItemMetadata to merge keys into existing metadata.',
+      }),
+    ];
+    setIssueFetcher(async () => issues);
+    setContentFilter(async () => FILTER_ENCODING_ONLY);
+
+    await evaluateGithubIssues(makeItem());
+
+    const workItems = bb.listWorkItems({ all: true, project: 'test-project' });
+    const desc = workItems[0].description!;
+    // Body should be included despite BLOCKED decision (no pattern matches)
+    expect(desc).toContain('## Issue Details');
+    expect(desc).toContain('updateWorkItemMetadata');
+    expect(desc).toContain('Content Warning');
+    expect(desc).not.toContain('Content Blocked');
+
+    const metadata = JSON.parse(workItems[0].metadata!);
+    expect(metadata.content_blocked).toBe(false);
+    expect(metadata.content_warning).toBe(true);
   });
 
   test('content filter error fails open — body still included', async () => {
