@@ -13,6 +13,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check out ivy-blackboard (sibling dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: jcfischer/ivy-blackboard
+          path: ../ivy-blackboard
+
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
