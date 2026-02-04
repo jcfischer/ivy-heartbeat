@@ -204,19 +204,21 @@ export async function createPR(
   body: string,
   base: string
 ): Promise<{ number: number; url: string }> {
-  const output = await gh(
+  // gh pr create outputs the PR URL to stdout (no --json support)
+  const url = await gh(
     [
       'pr', 'create',
       '--title', title,
       '--body', body,
       '--base', base,
-      '--json', 'number,url',
     ],
     worktreePath
   );
 
-  const result = JSON.parse(output);
-  return { number: result.number, url: result.url };
+  // Extract PR number from URL: https://github.com/owner/repo/pull/123
+  const match = url.match(/\/pull\/(\d+)$/);
+  const number = match ? parseInt(match[1], 10) : 0;
+  return { number, url };
 }
 
 // ─── Post-agent merge & sync ──────────────────────────────────────────────
