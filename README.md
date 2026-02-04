@@ -1,6 +1,11 @@
 # Ivy Heartbeat
 
-Proactive monitoring system for PAI. Runs periodic checks against a configurable checklist, dispatches alerts through multiple channels, and maintains an event log in the blackboard.
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/jcfischer/ivy-heartbeat/actions/workflows/ci.yml/badge.svg)](https://github.com/jcfischer/ivy-heartbeat/actions/workflows/ci.yml)
+
+Proactive monitoring system that runs periodic checks against a configurable markdown checklist, dispatches alerts through multiple channels (terminal notifications, voice, email), and maintains a full event log in a SQLite-backed blackboard.
+
+Built with [Bun](https://bun.sh) and designed to run as a macOS launchd agent for hands-free monitoring.
 
 ## Quick Start
 
@@ -188,15 +193,35 @@ API endpoints: `/api/events`, `/api/heartbeats`, `/api/summary`, `/api/search?q=
 
 ## Dependencies
 
-- **[ivy-blackboard](../ivy-blackboard)** — SQLite multi-agent coordination (agents, events, heartbeats)
-- **Bun** — Runtime, test runner, HTTP server, SQLite
-- **Commander.js** — CLI framework
-- **Zod** — Schema validation
-- **js-yaml** — YAML parsing
+- **[ivy-blackboard](https://github.com/jcfischer/ivy-blackboard)** — SQLite multi-agent coordination (agents, events, heartbeats)
+- **[Bun](https://bun.sh)** — Runtime, test runner, HTTP server, SQLite
+- **[Commander.js](https://github.com/tj/commander.js)** — CLI framework
+- **[Zod](https://zod.dev)** — Schema validation
+- **[js-yaml](https://github.com/nodeca/js-yaml)** — YAML parsing
 
 ## Tests
 
 ```bash
-bun test              # 214 tests, ~4s
-bun test test/fts.test.ts  # Run specific test file
+bun test                    # Run all tests
+bun test test/fts.test.ts   # Run specific test file
 ```
+
+## Configuration
+
+The checklist lives at `~/.pai/IVY_HEARTBEAT.md` by default. Override with the `--checklist` flag or set a custom path.
+
+Environment variables:
+- `IMAP_HOST`, `IMAP_USER`, `IMAP_PASS`, `IMAP_PORT` — for the email evaluator
+- `CONTENT_FILTER_PATH` — path to an optional content filter CLI (for GitHub issue body filtering)
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on how to contribute.
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for our security policy and how to report vulnerabilities.
+
+## License
+
+[MIT](LICENSE) - Copyright (c) 2025-2026 Jens-Christian Fischer
