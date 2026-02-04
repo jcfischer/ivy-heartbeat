@@ -15,15 +15,19 @@ import {
   type DeregisterAgentResult,
 } from 'ivy-blackboard/src/agent';
 import {
+  createWorkItem,
   listWorkItems,
   claimWorkItem,
   completeWorkItem,
   releaseWorkItem,
+  type CreateWorkItemOptions,
+  type CreateWorkItemResult,
   type ListWorkItemsOptions,
   type ClaimWorkItemResult,
   type CompleteWorkItemResult,
   type ReleaseWorkItemResult,
 } from 'ivy-blackboard/src/work';
+import { listProjects, type ProjectWithCounts } from 'ivy-blackboard/src/project';
 import type { BlackboardProject, BlackboardWorkItem } from 'ivy-blackboard/src/types';
 import { HeartbeatQueryRepository } from './repositories/heartbeats.ts';
 import { EventQueryRepository } from './repositories/events.ts';
@@ -64,6 +68,10 @@ export class Blackboard {
 
   // ─── Work items (delegated to ivy-blackboard) ───────────────────────────
 
+  createWorkItem(opts: CreateWorkItemOptions): CreateWorkItemResult {
+    return createWorkItem(this.db, opts);
+  }
+
   listWorkItems(opts?: ListWorkItemsOptions): BlackboardWorkItem[] {
     return listWorkItems(this.db, opts);
   }
@@ -80,12 +88,16 @@ export class Blackboard {
     return releaseWorkItem(this.db, itemId, sessionId);
   }
 
-  // ─── Projects (direct query) ──────────────────────────────────────────
+  // ─── Projects (delegated to ivy-blackboard) ──────────────────────────
 
   getProject(projectId: string): BlackboardProject | null {
     return this.db
       .query('SELECT * FROM projects WHERE project_id = ?')
       .get(projectId) as BlackboardProject | null;
+  }
+
+  listProjects(): ProjectWithCounts[] {
+    return listProjects(this.db);
   }
 
   // ─── Event appending (direct SQL — works around CHECK constraint) ──────
@@ -139,11 +151,15 @@ export type {
 } from 'ivy-blackboard/src/types';
 
 export type {
+  CreateWorkItemOptions,
+  CreateWorkItemResult,
   ListWorkItemsOptions,
   ClaimWorkItemResult,
   CompleteWorkItemResult,
   ReleaseWorkItemResult,
 } from 'ivy-blackboard/src/work';
+
+export type { ProjectWithCounts } from 'ivy-blackboard/src/project';
 
 export * from './parser/types.ts';
 export { HeartbeatQueryRepository } from './repositories/heartbeats.ts';
