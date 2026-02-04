@@ -110,8 +110,9 @@ async function defaultContentFilter(content: string, label: string): Promise<Con
   try {
     writeFileSync(tmpFile, content);
 
+    const filterPath = process.env.CONTENT_FILTER_PATH ?? join(process.env.HOME ?? '', 'work/pai-content-filter/src/cli.ts');
     const proc = Bun.spawn(
-      ['bun', 'run', join(process.env.HOME ?? '', 'work/pai-content-filter/src/cli.ts'), 'check', tmpFile, '--json', '--format', 'markdown'],
+      ['bun', 'run', filterPath, 'check', tmpFile, '--json', '--format', 'markdown'],
       { stdout: 'pipe', stderr: 'pipe' }
     );
 

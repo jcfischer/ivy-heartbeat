@@ -1,5 +1,6 @@
 node_modules/
 .env
+.env.*
 *.db
 *.db-wal
 *.db-shm
@@ -10,3 +11,5 @@ dist/
 .claude-checkpoint.md
 .cursor/
 ivy-heartbeat
+*.log
+*.plist

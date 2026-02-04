@@ -253,7 +253,7 @@ blackboard observe --heartbeats --since "1 week ago" --sum-metadata cost
 INSERT INTO events (event_type, actor_id, summary, metadata)
 VALUES ('session_started', 'claude-2026-02-03-09:15:00',
         'User opened Claude Code in kai-improvement-roadmap',
-        '{"project": "kai-improvement-roadmap", "cwd": "/Users/fischer/work/kai-improvement-roadmap"}');
+        '{"project": "kai-improvement-roadmap", "cwd": "/home/user/work/kai-improvement-roadmap"}');
 
 -- Session activity (extracted by post-session hook)
 INSERT INTO events (event_type, actor_id, summary, metadata)

@@ -1,8 +1,19 @@
 {
   "name": "ivy-heartbeat",
+  "version": "0.1.0",
+  "description": "Proactive monitoring system with configurable checks, multi-channel alerts, and SQLite event logging",
   "module": "src/blackboard.ts",
   "type": "module",
-  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jcfischer/ivy-heartbeat.git"
+  },
+  "homepage": "https://github.com/jcfischer/ivy-heartbeat",
+  "bugs": {
+    "url": "https://github.com/jcfischer/ivy-heartbeat/issues"
+  },
+  "author": "Jens-Christian Fischer",
   "bin": {
     "ivy-heartbeat": "src/cli.ts"
   },
