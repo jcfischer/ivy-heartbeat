@@ -30,6 +30,22 @@ function formatToolUse(block: any): string {
     case 'Glob': return `[tool] Glob: ${input.pattern ?? ''}`;
     case 'Grep': return `[tool] Grep: ${input.pattern ?? ''}`;
     case 'Task': return `[tool] Task: ${input.description ?? ''}`;
+    case 'TaskCreate': return `[tool] TaskCreate: ${input.subject ?? ''}`;
+    case 'TaskUpdate': {
+      const status = input.status ? ` → ${input.status}` : '';
+      return `[tool] TaskUpdate: #${input.taskId ?? '?'}${status}`;
+    }
+    case 'TaskList': return '[tool] TaskList';
+    case 'TaskOutput': return `[tool] TaskOutput: task=${input.task_id ?? '?'}`;
+    case 'TodoWrite': {
+      const todos = Array.isArray(input.todos) ? input.todos : [];
+      const summary = todos.map((t: any) => `${t.status === 'completed' ? '✓' : '○'} ${(t.content ?? '').slice(0, 60)}`).join(', ');
+      return `[tool] TodoWrite: ${summary || '(empty)'}`;
+    }
+    case 'WebFetch': return `[tool] WebFetch: ${input.url ?? ''}`;
+    case 'WebSearch': return `[tool] WebSearch: ${input.query ?? ''}`;
+    case 'Skill': return `[tool] Skill: ${input.skill ?? ''}`;
+    case 'NotebookEdit': return `[tool] NotebookEdit: ${input.notebook_path ?? ''}`;
     default: return `[tool] ${name}`;
   }
 }
