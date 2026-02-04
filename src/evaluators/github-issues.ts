@@ -184,39 +184,6 @@ export function resetBlackboardAccessor(): void {
   bbAccessor = null;
 }
 
-function buildWorkflow(
-  mode: 'autonomous' | 'human-gated',
-  ownerRepo: string,
-  issueNumber: number
-): string {
-  // NOTE: ivy-blackboard sanitizeText strips fenced code blocks and truncates
-  // at 500 chars, so keep this concise and avoid ``` blocks.
-  const branch = `fix/issue-${issueNumber}`;
-
-  if (mode === 'autonomous') {
-    return [
-      '1. Investigate root cause in the codebase',
-      `2. Create branch: ${branch}`,
-      '3. Implement the fix',
-      '4. Run tests to verify',
-      `5. Commit changes with message referencing #${issueNumber}`,
-      `6. Push branch: git push -u origin ${branch}`,
-      `7. Comment on issue: gh issue comment ${issueNumber} --repo ${ownerRepo}`,
-    ].join('\n');
-  }
-
-  return [
-    `1. Comment on issue confirming triage: gh issue comment ${issueNumber} --repo ${ownerRepo}`,
-    '2. Investigate root cause in the codebase',
-    `3. Create branch: ${branch}`,
-    '4. Implement the fix',
-    '5. Run tests to verify',
-    `6. Commit changes with message referencing #${issueNumber}`,
-    `7. Push branch: git push -u origin ${branch}`,
-    `8. Comment on issue with summary: gh issue comment ${issueNumber} --repo ${ownerRepo}`,
-  ].join('\n');
-}
-
 /**
  * Evaluate GitHub issues across all registered projects.
  *
@@ -282,8 +249,6 @@ export async function evaluateGithubIssues(item: ChecklistItem): Promise<CheckRe
         const isOwner = config.ownerLogins.some(
           (login) => login.toLowerCase() === issue.author.login.toLowerCase()
         );
-        const workflowMode: 'autonomous' | 'human-gated' = isOwner ? 'autonomous' : 'human-gated';
-        const workflowSteps = buildWorkflow(workflowMode, ownerRepo, issue.number);
 
         // Run issue body through content filter to detect prompt injection
         let filterResult: ContentFilterResult;
@@ -331,12 +296,6 @@ export async function evaluateGithubIssues(item: ChecklistItem): Promise<CheckRe
             issue.body,
           );
         }
-
-        descriptionParts.push(
-          '',
-          `## Fix Workflow (${workflowMode})`,
-          workflowSteps,
-        );
 
         const description = descriptionParts.filter(Boolean).join('\n');
 

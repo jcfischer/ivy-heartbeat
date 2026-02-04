@@ -221,7 +221,7 @@ describe('evaluateGithubIssues', () => {
     expect(metadata.github_repo).toBe('owner/test-project');
   });
 
-  test('work item description includes fix workflow steps', async () => {
+  test('work item description includes issue context but no git workflow', async () => {
     const issues = [
       makeIssue({
         number: 3,
@@ -240,12 +240,10 @@ describe('evaluateGithubIssues', () => {
     expect(desc).toContain('GitHub Issue #3: Auth broken');
     expect(desc).toContain('Opened by: alice');
     expect(desc).toContain('Labels: bug, critical');
-    expect(desc).toContain('Comment on issue confirming triage');
-    expect(desc).toContain('Investigate root cause');
-    expect(desc).toContain('Create branch: fix/issue-3');
-    expect(desc).toContain('Commit changes');
-    expect(desc).toContain('Push branch: git push -u origin fix/issue-3');
-    expect(desc).toContain('gh issue comment 3 --repo owner/test-project');
+    // Git workflow is now handled by the dispatch worker, not embedded in description
+    expect(desc).not.toContain('Fix Workflow');
+    expect(desc).not.toContain('Create branch');
+    expect(desc).not.toContain('git push');
   });
 
   test('work item priority is P2 by default', async () => {
@@ -290,7 +288,7 @@ describe('evaluateGithubIssues', () => {
     expect(metadata.workflow).toBe('investigate-branch-implement-test-commit-push-comment');
   });
 
-  test('owner issues description contains autonomous workflow steps', async () => {
+  test('owner issues description contains autonomous marker but no git workflow', async () => {
     const issues = [
       makeIssue({
         number: 8,
@@ -306,10 +304,10 @@ describe('evaluateGithubIssues', () => {
     const workItems = bb.listWorkItems({ all: true, project: 'test-project' });
     const desc = workItems[0].description!;
     expect(desc).toContain('autonomous');
-    expect(desc).toContain('Create branch: fix/issue-8');
-    expect(desc).toContain('Push branch: git push -u origin fix/issue-8');
-    expect(desc).toContain('Comment on issue: gh issue comment 8 --repo owner/test-project');
-    expect(desc).not.toContain('triage');
+    // Git workflow is now handled by the dispatch worker
+    expect(desc).not.toContain('Fix Workflow');
+    expect(desc).not.toContain('Create branch');
+    expect(desc).not.toContain('git push');
   });
 
   test('owner login matching is case-insensitive', async () => {

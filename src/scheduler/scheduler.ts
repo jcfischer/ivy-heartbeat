@@ -2,6 +2,17 @@ import { mkdirSync, openSync, closeSync, appendFileSync } from 'node:fs';
 import type { Blackboard } from '../blackboard.ts';
 import type { BlackboardWorkItem } from 'ivy-blackboard/src/types';
 import { getLauncher, resolveLogDir, logPathForSession } from './launcher.ts';
+import {
+  isCleanBranch,
+  getCurrentBranch,
+  createWorktree,
+  removeWorktree,
+  commitAll,
+  pushBranch,
+  createPR,
+  getDiffSummary,
+  buildCommentPrompt,
+} from './worktree.ts';
 import type {
   DispatchOptions,
   DispatchResult,
@@ -36,6 +47,32 @@ function countActiveAgents(bb: Blackboard): number {
     .query("SELECT COUNT(*) as count FROM agents WHERE status IN ('active', 'idle') AND agent_name != 'ivy-heartbeat'")
     .get() as { count: number };
   return row.count;
+}
+
+/**
+ * Parse work item metadata to extract GitHub-specific fields.
+ */
+function parseGithubMeta(metadata: string | null): {
+  isGithub: boolean;
+  issueNumber?: number;
+  repo?: string;
+  author?: string;
+} {
+  if (!metadata) return { isGithub: false };
+  try {
+    const parsed = JSON.parse(metadata);
+    if (parsed.github_issue_number && parsed.github_repo) {
+      return {
+        isGithub: true,
+        issueNumber: parsed.github_issue_number,
+        repo: parsed.github_repo,
+        author: parsed.author,
+      };
+    }
+  } catch {
+    // Invalid metadata JSON
+  }
+  return { isGithub: false };
 }
 
 /**
@@ -292,9 +329,47 @@ export async function dispatch(
       const startTime = Date.now();
       const prompt = buildPrompt(item, sessionId);
 
+      // Worktree setup for GitHub items
+      const ghMeta = parseGithubMeta(item.metadata);
+      let workDir = project.local_path;
+      let worktreePath: string | null = null;
+      let branch: string | null = null;
+      let mainBranch: string | null = null;
+
+      if (ghMeta.isGithub && ghMeta.issueNumber) {
+        try {
+          const clean = await isCleanBranch(project.local_path);
+          if (!clean) {
+            result.skipped.push({
+              itemId: item.item_id,
+              title: item.title,
+              reason: 'main branch has uncommitted changes',
+            });
+            bb.releaseWorkItem(item.item_id, sessionId);
+            bb.deregisterAgent(sessionId);
+            continue;
+          }
+
+          mainBranch = await getCurrentBranch(project.local_path);
+          branch = `fix/issue-${ghMeta.issueNumber}`;
+          worktreePath = await createWorktree(project.local_path, branch, item.project_id ?? undefined);
+          workDir = worktreePath;
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          result.errors.push({
+            itemId: item.item_id,
+            title: item.title,
+            error: `Failed to create worktree: ${msg}`,
+          });
+          bb.releaseWorkItem(item.item_id, sessionId);
+          bb.deregisterAgent(sessionId);
+          continue;
+        }
+      }
+
       try {
         const launchResult = await launcher({
-          workDir: project.local_path,
+          workDir,
           prompt,
           timeoutMs: opts.timeout * 60 * 1000,
           sessionId,
@@ -303,6 +378,78 @@ export async function dispatch(
         const durationMs = Date.now() - startTime;
 
         if (launchResult.exitCode === 0) {
+          // Post-agent git operations for GitHub items
+          if (ghMeta.isGithub && worktreePath && branch && mainBranch) {
+            try {
+              const sha = await commitAll(
+                worktreePath,
+                `Fix #${ghMeta.issueNumber}: ${item.title}`
+              );
+
+              if (sha) {
+                await pushBranch(worktreePath, branch);
+
+                const prBody = [
+                  `Fixes #${ghMeta.issueNumber}`,
+                  '',
+                  `Automated fix for: ${item.title}`,
+                ].join('\n');
+
+                const pr = await createPR(
+                  worktreePath,
+                  `Fix #${ghMeta.issueNumber}: ${item.title}`,
+                  prBody,
+                  mainBranch
+                );
+
+                bb.appendEvent({
+                  actorId: sessionId,
+                  targetId: item.item_id,
+                  summary: `Created PR #${pr.number} for "${item.title}"`,
+                  metadata: { prNumber: pr.number, prUrl: pr.url, commitSha: sha },
+                });
+
+                // Launch commenter agent (non-fatal)
+                try {
+                  const diffSummary = await getDiffSummary(worktreePath, mainBranch);
+                  const commentPrompt = buildCommentPrompt(
+                    {
+                      number: ghMeta.issueNumber!,
+                      title: item.title,
+                      body: item.description ?? undefined,
+                      author: ghMeta.author ?? 'unknown',
+                    },
+                    pr.url,
+                    diffSummary
+                  );
+
+                  await launcher({
+                    workDir: worktreePath,
+                    prompt: commentPrompt,
+                    timeoutMs: 120_000,
+                    sessionId: `${sessionId}-comment`,
+                  });
+                } catch {
+                  // Commenter failure is non-fatal
+                }
+              }
+            } catch (gitErr: unknown) {
+              const msg = gitErr instanceof Error ? gitErr.message : String(gitErr);
+              bb.releaseWorkItem(item.item_id, sessionId);
+              bb.deregisterAgent(sessionId);
+              result.errors.push({
+                itemId: item.item_id,
+                title: item.title,
+                error: `Post-agent git ops failed: ${msg}`,
+              });
+              // Clean up worktree before continuing
+              if (worktreePath) {
+                try { await removeWorktree(project.local_path, worktreePath); } catch { /* best effort */ }
+              }
+              continue;
+            }
+          }
+
           bb.completeWorkItem(item.item_id, sessionId);
 
           bb.appendEvent({
@@ -363,6 +510,11 @@ export async function dispatch(
           title: item.title,
           error: msg,
         });
+      } finally {
+        // Always clean up worktree if created
+        if (worktreePath) {
+          try { await removeWorktree(project.local_path, worktreePath); } catch { /* best effort */ }
+        }
       }
     }
   }
