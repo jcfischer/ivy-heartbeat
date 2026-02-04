@@ -56,6 +56,18 @@ describe('parseGithubIssuesConfig', () => {
     expect(config.labels).toEqual(['bug', 'critical']);
     expect(config.limit).toBe(10);
   });
+
+  test('parses owner_logins', () => {
+    const config = parseGithubIssuesConfig(
+      makeItem({ config: { owner_logins: ['jcfischer', 'bot'] } })
+    );
+    expect(config.ownerLogins).toEqual(['jcfischer', 'bot']);
+  });
+
+  test('defaults owner_logins to empty array', () => {
+    const config = parseGithubIssuesConfig(makeItem());
+    expect(config.ownerLogins).toEqual([]);
+  });
 });
 
 describe('extractOwnerRepo', () => {
@@ -238,6 +250,92 @@ describe('evaluateGithubIssues', () => {
     const result = await evaluateGithubIssues(makeItem());
     expect(result.status).toBe('error');
     expect(result.summary).toContain('Network timeout');
+  });
+
+  test('owner issues get autonomous workflow and P1 priority', async () => {
+    const issues = [
+      makeIssue({
+        number: 7,
+        title: 'Add feature X',
+        url: 'https://github.com/owner/test-project/issues/7',
+        author: { login: 'jcfischer' },
+      }),
+    ];
+    setIssueFetcher(async () => issues);
+
+    await evaluateGithubIssues(makeItem({ config: { owner_logins: ['jcfischer'] } }));
+
+    const workItems = bb.listWorkItems({ all: true, project: 'test-project' });
+    expect(workItems.length).toBe(1);
+    expect(workItems[0].priority).toBe('P1');
+
+    const metadata = JSON.parse(workItems[0].metadata!);
+    expect(metadata.human_review_required).toBe(false);
+    expect(metadata.auto_push).toBe(true);
+    expect(metadata.workflow).toBe('investigate-implement-test-push-notify');
+  });
+
+  test('owner issues description contains autonomous workflow steps', async () => {
+    const issues = [
+      makeIssue({
+        number: 8,
+        title: 'Refactor Y',
+        url: 'https://github.com/owner/test-project/issues/8',
+        author: { login: 'jcfischer' },
+      }),
+    ];
+    setIssueFetcher(async () => issues);
+
+    await evaluateGithubIssues(makeItem({ config: { owner_logins: ['jcfischer'] } }));
+
+    const workItems = bb.listWorkItems({ all: true, project: 'test-project' });
+    const desc = workItems[0].description!;
+    expect(desc).toContain('autonomous');
+    expect(desc).toContain('Push: Push branch and create pull request');
+    expect(desc).not.toContain('do NOT push');
+    expect(desc).not.toContain('Human review');
+  });
+
+  test('owner login matching is case-insensitive', async () => {
+    const issues = [
+      makeIssue({
+        number: 9,
+        title: 'Case test',
+        url: 'https://github.com/owner/test-project/issues/9',
+        author: { login: 'JCFischer' },
+      }),
+    ];
+    setIssueFetcher(async () => issues);
+
+    await evaluateGithubIssues(makeItem({ config: { owner_logins: ['jcfischer'] } }));
+
+    const workItems = bb.listWorkItems({ all: true, project: 'test-project' });
+    expect(workItems[0].priority).toBe('P1');
+
+    const metadata = JSON.parse(workItems[0].metadata!);
+    expect(metadata.auto_push).toBe(true);
+  });
+
+  test('non-owner issues still get human-gated workflow', async () => {
+    const issues = [
+      makeIssue({
+        number: 11,
+        title: 'External bug report',
+        url: 'https://github.com/owner/test-project/issues/11',
+        author: { login: 'external-user' },
+      }),
+    ];
+    setIssueFetcher(async () => issues);
+
+    await evaluateGithubIssues(makeItem({ config: { owner_logins: ['jcfischer'] } }));
+
+    const workItems = bb.listWorkItems({ all: true, project: 'test-project' });
+    expect(workItems[0].priority).toBe('P2');
+
+    const metadata = JSON.parse(workItems[0].metadata!);
+    expect(metadata.human_review_required).toBe(true);
+    expect(metadata.auto_push).toBe(false);
+    expect(metadata.workflow).toBe('acknowledge-investigate-fix-notify-review');
   });
 
   test('skips projects without GitHub remote_repo', async () => {

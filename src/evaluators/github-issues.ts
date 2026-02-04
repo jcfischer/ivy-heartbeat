@@ -17,6 +17,8 @@ interface GithubIssuesConfig {
   labels: string[];
   /** Max issues to fetch per repo */
   limit: number;
+  /** GitHub logins treated as owner — issues from these authors run autonomously */
+  ownerLogins: string[];
 }
 
 /**
@@ -26,6 +28,7 @@ export function parseGithubIssuesConfig(item: ChecklistItem): GithubIssuesConfig
   return {
     labels: Array.isArray(item.config.labels) ? item.config.labels as string[] : [],
     limit: typeof item.config.limit === 'number' ? item.config.limit : 30,
+    ownerLogins: Array.isArray(item.config.owner_logins) ? item.config.owner_logins as string[] : [],
   };
 }
 
@@ -111,12 +114,20 @@ export function resetBlackboardAccessor(): void {
   bbAccessor = null;
 }
 
-const WORKFLOW_STEPS = [
+const WORKFLOW_HUMAN_GATED = [
   '1. Acknowledge: Comment on the issue confirming triage',
   '2. Investigate: Analyze root cause in the codebase',
   '3. Prepare fix: Create branch and implement fix (do NOT push)',
   '4. Notify: Send email summary of the fix to human reviewer',
   '5. Human review: Wait for approval before pushing',
+].join('\n');
+
+const WORKFLOW_AUTONOMOUS = [
+  '1. Investigate: Analyze root cause in the codebase',
+  '2. Implement: Create branch and implement the fix',
+  '3. Test: Run test suite to verify fix',
+  '4. Push: Push branch and create pull request',
+  '5. Notify: Send email summary of changes made',
 ].join('\n');
 
 /**
@@ -181,14 +192,19 @@ export async function evaluateGithubIssues(item: ChecklistItem): Promise<CheckRe
         // New issue — create work item
         const itemId = `gh-${project.project_id}-${issue.number}`;
         const labelStr = issue.labels.map((l) => l.name).join(', ');
+        const isOwner = config.ownerLogins.some(
+          (login) => login.toLowerCase() === issue.author.login.toLowerCase()
+        );
+        const workflowLabel = isOwner ? 'autonomous' : 'human-gated';
+        const workflowSteps = isOwner ? WORKFLOW_AUTONOMOUS : WORKFLOW_HUMAN_GATED;
         const description = [
           `GitHub Issue #${issue.number}: ${issue.title}`,
-          `Opened by: ${issue.author.login}`,
+          `Opened by: ${issue.author.login}${isOwner ? ' (owner — autonomous execution)' : ''}`,
           labelStr ? `Labels: ${labelStr}` : '',
           `URL: ${issue.url}`,
           '',
-          '## Fix Workflow (human-gated)',
-          WORKFLOW_STEPS,
+          `## Fix Workflow (${workflowLabel})`,
+          workflowSteps,
         ].filter(Boolean).join('\n');
 
         try {
@@ -199,15 +215,15 @@ export async function evaluateGithubIssues(item: ChecklistItem): Promise<CheckRe
             project: project.project_id,
             source: 'github',
             sourceRef: issue.url,
-            priority: 'P2',
+            priority: isOwner ? 'P1' : 'P2',
             metadata: JSON.stringify({
               github_issue_number: issue.number,
               github_repo: ownerRepo,
               author: issue.author.login,
               labels: issue.labels.map((l) => l.name),
-              workflow: 'acknowledge-investigate-fix-notify-review',
-              human_review_required: true,
-              auto_push: false,
+              workflow: isOwner ? 'investigate-implement-test-push-notify' : 'acknowledge-investigate-fix-notify-review',
+              human_review_required: !isOwner,
+              auto_push: isOwner,
             }),
           });
 
