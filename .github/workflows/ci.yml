@@ -20,6 +20,9 @@ jobs:
         with:
           bun-version: latest
 
+      - name: Install ivy-blackboard dependencies
+        run: bun install --cwd ../ivy-blackboard
+
       - name: Install dependencies
         run: bun install
 
