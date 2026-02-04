@@ -1,6 +1,6 @@
 import type { Blackboard } from '../blackboard.ts';
 import type { BlackboardWorkItem } from 'ivy-blackboard/src/types';
-import { getLauncher } from './launcher.ts';
+import { getLauncher, logPathForSession } from './launcher.ts';
 import type {
   DispatchOptions,
   DispatchResult,
@@ -158,6 +158,12 @@ export async function dispatch(
         work: item.item_id,
       });
       sessionId = agent.session_id;
+
+      // Store log path in agent metadata
+      const logPath = logPathForSession(sessionId);
+      bb.db
+        .query("UPDATE agents SET metadata = ? WHERE session_id = ?")
+        .run(JSON.stringify({ logPath }), sessionId);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       result.errors.push({
