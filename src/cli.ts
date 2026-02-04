@@ -9,6 +9,7 @@ import { registerScheduleCommand } from './commands/schedule.ts';
 import { registerSearchCommand } from './commands/search.ts';
 import { registerExportCommand } from './commands/export.ts';
 import { registerServeCommand } from './commands/serve.ts';
+import { registerDispatchCommand } from './commands/dispatch.ts';
 
 export interface CliContext {
   bb: Blackboard;
@@ -49,5 +50,6 @@ registerScheduleCommand(program, getContext);
 registerSearchCommand(program, getContext);
 registerExportCommand(program, getContext);
 registerServeCommand(program, getContext);
+registerDispatchCommand(program, getContext);
 
 program.parse();

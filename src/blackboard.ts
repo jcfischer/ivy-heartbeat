@@ -14,6 +14,17 @@ import {
   type HeartbeatResult,
   type DeregisterAgentResult,
 } from 'ivy-blackboard/src/agent';
+import {
+  listWorkItems,
+  claimWorkItem,
+  completeWorkItem,
+  releaseWorkItem,
+  type ListWorkItemsOptions,
+  type ClaimWorkItemResult,
+  type CompleteWorkItemResult,
+  type ReleaseWorkItemResult,
+} from 'ivy-blackboard/src/work';
+import type { BlackboardProject, BlackboardWorkItem } from 'ivy-blackboard/src/types';
 import { HeartbeatQueryRepository } from './repositories/heartbeats.ts';
 import { EventQueryRepository } from './repositories/events.ts';
 import { setupFTS5 } from './fts.ts';
@@ -49,6 +60,32 @@ export class Blackboard {
 
   deregisterAgent(sessionId: string): DeregisterAgentResult {
     return deregisterAgent(this.db, sessionId);
+  }
+
+  // ─── Work items (delegated to ivy-blackboard) ───────────────────────────
+
+  listWorkItems(opts?: ListWorkItemsOptions): BlackboardWorkItem[] {
+    return listWorkItems(this.db, opts);
+  }
+
+  claimWorkItem(itemId: string, sessionId: string): ClaimWorkItemResult {
+    return claimWorkItem(this.db, itemId, sessionId);
+  }
+
+  completeWorkItem(itemId: string, sessionId: string): CompleteWorkItemResult {
+    return completeWorkItem(this.db, itemId, sessionId);
+  }
+
+  releaseWorkItem(itemId: string, sessionId: string): ReleaseWorkItemResult {
+    return releaseWorkItem(this.db, itemId, sessionId);
+  }
+
+  // ─── Projects (direct query) ──────────────────────────────────────────
+
+  getProject(projectId: string): BlackboardProject | null {
+    return this.db
+      .query('SELECT * FROM projects WHERE project_id = ?')
+      .get(projectId) as BlackboardProject | null;
   }
 
   // ─── Event appending (direct SQL — works around CHECK constraint) ──────
@@ -97,7 +134,16 @@ export type {
   BlackboardAgent,
   BlackboardEvent,
   BlackboardHeartbeat,
+  BlackboardProject,
+  BlackboardWorkItem,
 } from 'ivy-blackboard/src/types';
+
+export type {
+  ListWorkItemsOptions,
+  ClaimWorkItemResult,
+  CompleteWorkItemResult,
+  ReleaseWorkItemResult,
+} from 'ivy-blackboard/src/work';
 
 export * from './parser/types.ts';
 export { HeartbeatQueryRepository } from './repositories/heartbeats.ts';
