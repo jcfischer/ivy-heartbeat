@@ -10,6 +10,7 @@ import { registerSearchCommand } from './commands/search.ts';
 import { registerExportCommand } from './commands/export.ts';
 import { registerServeCommand } from './commands/serve.ts';
 import { registerDispatchCommand } from './commands/dispatch.ts';
+import { registerDispatchWorkerCommand } from './commands/dispatch-worker.ts';
 
 export interface CliContext {
   bb: Blackboard;
@@ -51,5 +52,6 @@ registerSearchCommand(program, getContext);
 registerExportCommand(program, getContext);
 registerServeCommand(program, getContext);
 registerDispatchCommand(program, getContext);
+registerDispatchWorkerCommand(program, getContext);
 
 program.parse();

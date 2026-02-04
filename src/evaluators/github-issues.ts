@@ -184,21 +184,38 @@ export function resetBlackboardAccessor(): void {
   bbAccessor = null;
 }
 
-const WORKFLOW_HUMAN_GATED = [
-  '1. Acknowledge: Comment on the issue confirming triage',
-  '2. Investigate: Analyze root cause in the codebase',
-  '3. Prepare fix: Create branch and implement fix (do NOT push)',
-  '4. Notify: Send email summary of the fix to human reviewer',
-  '5. Human review: Wait for approval before pushing',
-].join('\n');
+function buildWorkflow(
+  mode: 'autonomous' | 'human-gated',
+  ownerRepo: string,
+  issueNumber: number
+): string {
+  // NOTE: ivy-blackboard sanitizeText strips fenced code blocks and truncates
+  // at 500 chars, so keep this concise and avoid ``` blocks.
+  const branch = `fix/issue-${issueNumber}`;
 
-const WORKFLOW_AUTONOMOUS = [
-  '1. Investigate: Analyze root cause in the codebase',
-  '2. Implement: Create branch and implement the fix',
-  '3. Test: Run test suite to verify fix',
-  '4. Push: Push branch and create pull request',
-  '5. Notify: Send email summary of changes made',
-].join('\n');
+  if (mode === 'autonomous') {
+    return [
+      '1. Investigate root cause in the codebase',
+      `2. Create branch: ${branch}`,
+      '3. Implement the fix',
+      '4. Run tests to verify',
+      `5. Commit changes with message referencing #${issueNumber}`,
+      `6. Push branch: git push -u origin ${branch}`,
+      `7. Comment on issue: gh issue comment ${issueNumber} --repo ${ownerRepo}`,
+    ].join('\n');
+  }
+
+  return [
+    `1. Comment on issue confirming triage: gh issue comment ${issueNumber} --repo ${ownerRepo}`,
+    '2. Investigate root cause in the codebase',
+    `3. Create branch: ${branch}`,
+    '4. Implement the fix',
+    '5. Run tests to verify',
+    `6. Commit changes with message referencing #${issueNumber}`,
+    `7. Push branch: git push -u origin ${branch}`,
+    `8. Comment on issue with summary: gh issue comment ${issueNumber} --repo ${ownerRepo}`,
+  ].join('\n');
+}
 
 /**
  * Evaluate GitHub issues across all registered projects.
@@ -265,8 +282,8 @@ export async function evaluateGithubIssues(item: ChecklistItem): Promise<CheckRe
         const isOwner = config.ownerLogins.some(
           (login) => login.toLowerCase() === issue.author.login.toLowerCase()
         );
-        const workflowLabel = isOwner ? 'autonomous' : 'human-gated';
-        const workflowSteps = isOwner ? WORKFLOW_AUTONOMOUS : WORKFLOW_HUMAN_GATED;
+        const workflowMode: 'autonomous' | 'human-gated' = isOwner ? 'autonomous' : 'human-gated';
+        const workflowSteps = buildWorkflow(workflowMode, ownerRepo, issue.number);
 
         // Run issue body through content filter to detect prompt injection
         let filterResult: ContentFilterResult;
@@ -286,6 +303,7 @@ export async function evaluateGithubIssues(item: ChecklistItem): Promise<CheckRe
 
         const descriptionParts = [
           `GitHub Issue #${issue.number}: ${issue.title}`,
+          `Repository: ${ownerRepo}`,
           `Opened by: ${issue.author.login}${isOwner ? ' (owner — autonomous execution)' : ''}`,
           labelStr ? `Labels: ${labelStr}` : '',
           `URL: ${issue.url}`,
@@ -316,7 +334,7 @@ export async function evaluateGithubIssues(item: ChecklistItem): Promise<CheckRe
 
         descriptionParts.push(
           '',
-          `## Fix Workflow (${workflowLabel})`,
+          `## Fix Workflow (${workflowMode})`,
           workflowSteps,
         );
 
@@ -336,9 +354,8 @@ export async function evaluateGithubIssues(item: ChecklistItem): Promise<CheckRe
               github_repo: ownerRepo,
               author: issue.author.login,
               labels: issue.labels.map((l) => l.name),
-              workflow: isOwner ? 'investigate-implement-test-push-notify' : 'acknowledge-investigate-fix-notify-review',
+              workflow: isOwner ? 'investigate-branch-implement-test-commit-push-comment' : 'acknowledge-investigate-branch-implement-test-commit-push-comment',
               human_review_required: !isOwner,
-              auto_push: isOwner,
               content_filtered: true,
               content_blocked: contentBlocked,
               content_warning: contentWarning,

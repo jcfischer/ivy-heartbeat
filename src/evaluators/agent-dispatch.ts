@@ -68,6 +68,7 @@ export async function evaluateAgentDispatch(item: ChecklistItem): Promise<CheckR
       timeout: config.timeout,
       dryRun: false,
       priority: config.priority,
+      fireAndForget: true,
     });
 
     const dispatched = result.dispatched.length;
@@ -91,12 +92,18 @@ export async function evaluateAgentDispatch(item: ChecklistItem): Promise<CheckR
     }
 
     if (dispatched > 0) {
+      const launched = result.dispatched.filter((d) => !d.completed).length;
+      const summaryParts: string[] = [];
+      if (launched > 0) summaryParts.push(`${launched} launched`);
+      if (completed > 0) summaryParts.push(`${completed} completed`);
+
       return {
         item,
         status: 'ok',
-        summary: `Agent dispatch: ${item.name} — ${completed}/${dispatched} completed`,
+        summary: `Agent dispatch: ${item.name} — ${summaryParts.join(', ')}`,
         details: {
           dispatched,
+          launched,
           completed,
           errors: 0,
           skipped,

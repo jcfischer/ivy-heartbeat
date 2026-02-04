@@ -11,6 +11,8 @@ export interface DispatchOptions {
   dryRun: boolean;
   /** Timeout per work item in minutes (default: 60) */
   timeout: number;
+  /** Launch agents as detached processes and return immediately */
+  fireAndForget?: boolean;
 }
 
 export interface LaunchOptions {

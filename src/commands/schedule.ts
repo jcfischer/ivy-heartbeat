@@ -4,6 +4,7 @@ import type { CliContext } from '../cli.ts';
 import { formatJson } from 'ivy-blackboard/src/output';
 import {
   generatePlist,
+  isCompiledBinary,
   resolveBunPath,
   resolveCliPath,
   resolveLogDir,
@@ -35,23 +36,32 @@ export function registerScheduleCommand(
         return;
       }
 
-      let bunPath: string;
-      try {
-        bunPath = await resolveBunPath();
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error(`Error: ${msg}`);
-        process.exitCode = 1;
-        return;
+      const compiled = isCompiledBinary();
+      let binaryPath: string;
+      let scriptPath: string | undefined;
+
+      if (compiled) {
+        // Compiled binary: use it directly
+        binaryPath = resolveCliPath(); // resolves process.argv[0]
+      } else {
+        // Development: use bun + cli.ts
+        try {
+          binaryPath = await resolveBunPath();
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`Error: ${msg}`);
+          process.exitCode = 1;
+          return;
+        }
+        scriptPath = resolveCliPath();
       }
 
-      const cliPath = resolveCliPath();
       const logDir = resolveLogDir();
       const plistPath = resolvePlistPath();
 
       const xml = generatePlist({
-        bunPath,
-        cliPath,
+        binaryPath,
+        scriptPath,
         intervalSeconds: interval * 60,
         logDir,
       });
@@ -61,8 +71,8 @@ export function registerScheduleCommand(
           console.log(formatJson({
             dryRun: true,
             interval,
-            bunPath,
-            cliPath,
+            binaryPath,
+            scriptPath,
             logDir,
             plistPath,
             xml,

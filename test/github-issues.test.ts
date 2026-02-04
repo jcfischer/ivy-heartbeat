@@ -216,8 +216,7 @@ describe('evaluateGithubIssues', () => {
 
     const metadata = JSON.parse(workItems[0].metadata!);
     expect(metadata.human_review_required).toBe(true);
-    expect(metadata.auto_push).toBe(false);
-    expect(metadata.workflow).toBe('acknowledge-investigate-fix-notify-review');
+    expect(metadata.workflow).toBe('acknowledge-investigate-branch-implement-test-commit-push-comment');
     expect(metadata.github_issue_number).toBe(5);
     expect(metadata.github_repo).toBe('owner/test-project');
   });
@@ -241,10 +240,12 @@ describe('evaluateGithubIssues', () => {
     expect(desc).toContain('GitHub Issue #3: Auth broken');
     expect(desc).toContain('Opened by: alice');
     expect(desc).toContain('Labels: bug, critical');
-    expect(desc).toContain('Acknowledge');
-    expect(desc).toContain('Investigate');
-    expect(desc).toContain('Human review');
-    expect(desc).toContain('do NOT push');
+    expect(desc).toContain('Comment on issue confirming triage');
+    expect(desc).toContain('Investigate root cause');
+    expect(desc).toContain('Create branch: fix/issue-3');
+    expect(desc).toContain('Commit changes');
+    expect(desc).toContain('Push branch: git push -u origin fix/issue-3');
+    expect(desc).toContain('gh issue comment 3 --repo owner/test-project');
   });
 
   test('work item priority is P2 by default', async () => {
@@ -286,8 +287,7 @@ describe('evaluateGithubIssues', () => {
 
     const metadata = JSON.parse(workItems[0].metadata!);
     expect(metadata.human_review_required).toBe(false);
-    expect(metadata.auto_push).toBe(true);
-    expect(metadata.workflow).toBe('investigate-implement-test-push-notify');
+    expect(metadata.workflow).toBe('investigate-branch-implement-test-commit-push-comment');
   });
 
   test('owner issues description contains autonomous workflow steps', async () => {
@@ -306,9 +306,10 @@ describe('evaluateGithubIssues', () => {
     const workItems = bb.listWorkItems({ all: true, project: 'test-project' });
     const desc = workItems[0].description!;
     expect(desc).toContain('autonomous');
-    expect(desc).toContain('Push: Push branch and create pull request');
-    expect(desc).not.toContain('do NOT push');
-    expect(desc).not.toContain('Human review');
+    expect(desc).toContain('Create branch: fix/issue-8');
+    expect(desc).toContain('Push branch: git push -u origin fix/issue-8');
+    expect(desc).toContain('Comment on issue: gh issue comment 8 --repo owner/test-project');
+    expect(desc).not.toContain('triage');
   });
 
   test('owner login matching is case-insensitive', async () => {
@@ -328,7 +329,7 @@ describe('evaluateGithubIssues', () => {
     expect(workItems[0].priority).toBe('P1');
 
     const metadata = JSON.parse(workItems[0].metadata!);
-    expect(metadata.auto_push).toBe(true);
+    expect(metadata.human_review_required).toBe(false);
   });
 
   test('non-owner issues still get human-gated workflow', async () => {
@@ -349,8 +350,7 @@ describe('evaluateGithubIssues', () => {
 
     const metadata = JSON.parse(workItems[0].metadata!);
     expect(metadata.human_review_required).toBe(true);
-    expect(metadata.auto_push).toBe(false);
-    expect(metadata.workflow).toBe('acknowledge-investigate-fix-notify-review');
+    expect(metadata.workflow).toBe('acknowledge-investigate-branch-implement-test-commit-push-comment');
   });
 
   test('clean issue body is included in work item description', async () => {

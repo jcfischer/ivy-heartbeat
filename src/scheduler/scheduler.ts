@@ -1,12 +1,30 @@
+import { mkdirSync, openSync, closeSync, appendFileSync } from 'node:fs';
 import type { Blackboard } from '../blackboard.ts';
 import type { BlackboardWorkItem } from 'ivy-blackboard/src/types';
-import { getLauncher, logPathForSession } from './launcher.ts';
+import { getLauncher, resolveLogDir, logPathForSession } from './launcher.ts';
 import type {
   DispatchOptions,
   DispatchResult,
   DispatchedItem,
   SkippedItem,
 } from './types.ts';
+
+/**
+ * Resolve the path to the ivy-heartbeat binary.
+ * Uses process.execPath for compiled binaries, falls back to bun + src/cli.ts.
+ *
+ * In compiled Bun binaries, process.argv[0] is just "bun" (unhelpful),
+ * but process.execPath is the actual compiled binary path.
+ */
+function resolveWorkerBinary(): string[] {
+  const ep = process.execPath;
+  // If running as a compiled binary (not bun itself)
+  if (ep && !ep.endsWith('/bun') && !ep.endsWith('/node')) {
+    return [ep];
+  }
+  // Running from source: bun run src/cli.ts
+  return ['bun', 'run', `${import.meta.dir}/../cli.ts`];
+}
 
 /**
  * Count currently active dispatch agents (active or idle) on the blackboard.
@@ -133,9 +151,7 @@ export async function dispatch(
     return result;
   }
 
-  // Process items sequentially
-  const launcher = getLauncher();
-
+  // Dispatch items
   for (const item of itemsToProcess) {
     // Validate project has a local_path
     const project = item.project_id ? bb.getProject(item.project_id) : null;
@@ -197,37 +213,58 @@ export async function dispatch(
         projectId: item.project_id,
         priority: item.priority,
         workDir: project.local_path,
+        fireAndForget: !!opts.fireAndForget,
       },
     });
 
-    // Launch Claude Code session
-    const startTime = Date.now();
-    const prompt = buildPrompt(item, sessionId);
+    if (opts.fireAndForget) {
+      // Fire-and-forget: spawn a detached worker process and return immediately.
+      // The worker handles its own lifecycle (run claude, complete/release, deregister).
+      try {
+        const bin = resolveWorkerBinary();
+        const args = [...bin];
 
-    try {
-      const launchResult = await launcher({
-        workDir: project.local_path,
-        prompt,
-        timeoutMs: opts.timeout * 60 * 1000,
-        sessionId,
-      });
+        // --db is a global option on the parent command, so it goes before the subcommand
+        const dbPath = bb.db.filename;
+        if (dbPath) {
+          args.push('--db', dbPath);
+        }
 
-      const durationMs = Date.now() - startTime;
+        args.push(
+          'dispatch-worker',
+          '--session-id', sessionId,
+          '--item-id', item.item_id,
+          '--timeout-ms', String(opts.timeout * 60 * 1000),
+        );
 
-      if (launchResult.exitCode === 0) {
-        // Success: complete the work item
-        bb.completeWorkItem(item.item_id, sessionId);
+        // Redirect worker stderr to the session log file so startup crashes
+        // are captured instead of silently discarded.
+        const logDir = resolveLogDir();
+        mkdirSync(logDir, { recursive: true });
+        const logPath = logPathForSession(sessionId);
 
-        bb.appendEvent({
-          actorId: sessionId,
-          targetId: item.item_id,
-          summary: `Completed "${item.title}" (exit 0, ${Math.round(durationMs / 1000)}s)`,
-          metadata: {
-            itemId: item.item_id,
-            exitCode: 0,
-            durationMs,
-          },
-        });
+        appendFileSync(logPath, [
+          `=== Worker Spawned ===`,
+          `Time: ${new Date().toISOString()}`,
+          `Item: ${item.item_id} — ${item.title}`,
+          `Work Dir: ${project.local_path}`,
+          `===`,
+          '',
+        ].join('\n'));
+
+        const logFd = openSync(logPath, 'a');
+        try {
+          const proc = Bun.spawn(args, {
+            cwd: project.local_path,
+            stdout: 'ignore',
+            stderr: logFd,
+            stdin: 'ignore',
+          });
+          proc.unref();
+        } finally {
+          // Close parent's copy; child inherits its own fd
+          closeSync(logFd);
+        }
 
         result.dispatched.push({
           itemId: item.item_id,
@@ -235,62 +272,98 @@ export async function dispatch(
           projectId: item.project_id!,
           sessionId,
           exitCode: 0,
-          completed: true,
-          durationMs,
+          completed: false, // Not yet — worker will handle it
+          durationMs: 0,
         });
-      } else {
-        // Non-zero exit: release work back to available
-        bb.releaseWorkItem(item.item_id, sessionId);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // Clean up on spawn failure
+        try { bb.releaseWorkItem(item.item_id, sessionId); } catch { /* best effort */ }
+        try { bb.deregisterAgent(sessionId); } catch { /* best effort */ }
+        result.errors.push({
+          itemId: item.item_id,
+          title: item.title,
+          error: `Failed to spawn worker: ${msg}`,
+        });
+      }
+    } else {
+      // Synchronous mode: run launcher inline and wait for completion.
+      const launcher = getLauncher();
+      const startTime = Date.now();
+      const prompt = buildPrompt(item, sessionId);
+
+      try {
+        const launchResult = await launcher({
+          workDir: project.local_path,
+          prompt,
+          timeoutMs: opts.timeout * 60 * 1000,
+          sessionId,
+        });
+
+        const durationMs = Date.now() - startTime;
+
+        if (launchResult.exitCode === 0) {
+          bb.completeWorkItem(item.item_id, sessionId);
+
+          bb.appendEvent({
+            actorId: sessionId,
+            targetId: item.item_id,
+            summary: `Completed "${item.title}" (exit 0, ${Math.round(durationMs / 1000)}s)`,
+            metadata: { itemId: item.item_id, exitCode: 0, durationMs },
+          });
+
+          result.dispatched.push({
+            itemId: item.item_id,
+            title: item.title,
+            projectId: item.project_id!,
+            sessionId,
+            exitCode: 0,
+            completed: true,
+            durationMs,
+          });
+        } else {
+          bb.releaseWorkItem(item.item_id, sessionId);
+
+          bb.appendEvent({
+            actorId: sessionId,
+            targetId: item.item_id,
+            summary: `Failed "${item.title}" (exit ${launchResult.exitCode}, ${Math.round(durationMs / 1000)}s)`,
+            metadata: {
+              itemId: item.item_id,
+              exitCode: launchResult.exitCode,
+              durationMs,
+              stderr: launchResult.stderr.slice(0, 500),
+            },
+          });
+
+          result.errors.push({
+            itemId: item.item_id,
+            title: item.title,
+            error: `Claude exited with code ${launchResult.exitCode}`,
+          });
+        }
+
+        bb.deregisterAgent(sessionId);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const durationMs = Date.now() - startTime;
+
+        try { bb.releaseWorkItem(item.item_id, sessionId); } catch { /* best effort */ }
+        try { bb.deregisterAgent(sessionId); } catch { /* best effort */ }
 
         bb.appendEvent({
           actorId: sessionId,
           targetId: item.item_id,
-          summary: `Failed "${item.title}" (exit ${launchResult.exitCode}, ${Math.round(durationMs / 1000)}s)`,
-          metadata: {
-            itemId: item.item_id,
-            exitCode: launchResult.exitCode,
-            durationMs,
-            stderr: launchResult.stderr.slice(0, 500),
-          },
+          summary: `Error dispatching "${item.title}": ${msg}`,
+          metadata: { itemId: item.item_id, error: msg, durationMs },
         });
 
         result.errors.push({
           itemId: item.item_id,
           title: item.title,
-          error: `Claude exited with code ${launchResult.exitCode}`,
+          error: msg,
         });
       }
-
-      bb.deregisterAgent(sessionId);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      const durationMs = Date.now() - startTime;
-
-      // Release work on exception
-      try {
-        bb.releaseWorkItem(item.item_id, sessionId);
-      } catch {
-        // Best effort — item may already be released by sweep
-      }
-
-      try {
-        bb.deregisterAgent(sessionId);
-      } catch {
-        // Best effort
-      }
-
-      bb.appendEvent({
-        actorId: sessionId,
-        targetId: item.item_id,
-        summary: `Error dispatching "${item.title}": ${msg}`,
-        metadata: { itemId: item.item_id, error: msg, durationMs },
-      });
-
-      result.errors.push({
-        itemId: item.item_id,
-        title: item.title,
-        error: msg,
-      });
     }
   }
 

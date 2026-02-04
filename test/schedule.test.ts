@@ -9,10 +9,18 @@ import {
   DEFAULT_INTERVAL_MINUTES,
 } from '../src/schedule/plist.ts';
 
+/** Source-mode config: bun + script */
 const SAMPLE_CONFIG = {
-  bunPath: '/opt/homebrew/bin/bun',
-  cliPath: '/tmp/ivy-heartbeat/src/cli.ts',
+  binaryPath: '/opt/homebrew/bin/bun',
+  scriptPath: '/tmp/ivy-heartbeat/src/cli.ts',
   intervalSeconds: 3600,
+  logDir: '/tmp/ivy-heartbeat/logs',
+};
+
+/** Compiled-binary config */
+const COMPILED_CONFIG = {
+  binaryPath: '/opt/local/bin/ivy-heartbeat',
+  intervalSeconds: 600,
   logDir: '/tmp/ivy-heartbeat/logs',
 };
 
@@ -24,14 +32,17 @@ describe('generatePlist', () => {
     expect(xml).toContain('<!DOCTYPE plist');
   });
 
-  test('contains absolute bun path in ProgramArguments', () => {
+  test('source mode: contains bun path and script path', () => {
     const xml = generatePlist(SAMPLE_CONFIG);
     expect(xml).toContain('<string>/opt/homebrew/bin/bun</string>');
+    expect(xml).toContain('<string>/tmp/ivy-heartbeat/src/cli.ts</string>');
   });
 
-  test('contains absolute cli.ts path in ProgramArguments', () => {
-    const xml = generatePlist(SAMPLE_CONFIG);
-    expect(xml).toContain('<string>/tmp/ivy-heartbeat/src/cli.ts</string>');
+  test('compiled mode: contains only binary path, no script path', () => {
+    const xml = generatePlist(COMPILED_CONFIG);
+    expect(xml).toContain('<string>/opt/local/bin/ivy-heartbeat</string>');
+    expect(xml).not.toContain('cli.ts');
+    expect(xml).not.toContain('bun</string>');
   });
 
   test('contains check subcommand in ProgramArguments', () => {
@@ -70,10 +81,22 @@ describe('generatePlist', () => {
     expect(xml).toContain('<true/>');
   });
 
-  test('includes PATH environment variable', () => {
+  test('includes PATH environment variable with ~/bin', () => {
     const xml = generatePlist(SAMPLE_CONFIG);
     expect(xml).toContain('<key>PATH</key>');
     expect(xml).toContain('/opt/homebrew/bin');
+    expect(xml).toContain('/bin:');
+  });
+
+  test('includes HOME environment variable', () => {
+    const xml = generatePlist(SAMPLE_CONFIG);
+    expect(xml).toContain('<key>HOME</key>');
+  });
+
+  test('includes AbandonProcessGroup', () => {
+    const xml = generatePlist(SAMPLE_CONFIG);
+    expect(xml).toContain('<key>AbandonProcessGroup</key>');
+    expect(xml).toContain('<true/>');
   });
 
   test('no tilde in output', () => {
@@ -93,9 +116,17 @@ describe('generatePlist', () => {
   });
 
   test('escapes XML special characters in paths', () => {
-    const xml = generatePlist({ ...SAMPLE_CONFIG, bunPath: '/path/with<special>&chars' });
+    const xml = generatePlist({ ...SAMPLE_CONFIG, binaryPath: '/path/with<special>&chars' });
     expect(xml).toContain('&lt;special&gt;&amp;chars');
     expect(xml).not.toContain('<special>');
+  });
+
+  test('--db comes before check in args', () => {
+    const xml = generatePlist({ ...SAMPLE_CONFIG, dbPath: '/tmp/test.db' });
+    const dbIdx = xml.indexOf('--db');
+    const checkIdx = xml.indexOf('<string>check</string>');
+    expect(dbIdx).toBeGreaterThan(-1);
+    expect(checkIdx).toBeGreaterThan(dbIdx);
   });
 });
 
