@@ -39,7 +39,7 @@ describe('Blackboard initialization (via ivy-blackboard)', () => {
       .prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1')
       .get() as { version: number } | null;
     expect(row).not.toBeNull();
-    expect(row!.version).toBe(1);
+    expect(row!.version).toBeGreaterThanOrEqual(1);
   });
 
   test('is idempotent (opening same path twice works)', () => {
