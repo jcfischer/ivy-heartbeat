@@ -171,51 +171,32 @@ export async function dispatch(
   if (opts.dryRun) {
     for (const item of itemsToProcess) {
       const project = item.project_id ? bb.getProject(item.project_id) : null;
-      if (!project?.local_path) {
-        result.skipped.push({
-          itemId: item.item_id,
-          title: item.title,
-          reason: item.project_id
-            ? `project "${item.project_id}" has no local_path`
-            : 'no project assigned',
-        });
-      } else {
-        result.dispatched.push({
-          itemId: item.item_id,
-          title: item.title,
-          projectId: item.project_id!,
-          sessionId: '(dry-run)',
-          exitCode: 0,
-          completed: false,
-          durationMs: 0,
-        });
-      }
+      const workDir = project?.local_path ?? process.env.HOME ?? '/tmp';
+      result.dispatched.push({
+        itemId: item.item_id,
+        title: item.title,
+        projectId: item.project_id ?? '(none)',
+        sessionId: '(dry-run)',
+        exitCode: 0,
+        completed: false,
+        durationMs: 0,
+      });
     }
     return result;
   }
 
   // Dispatch items
   for (const item of itemsToProcess) {
-    // Validate project has a local_path
+    // Resolve project (may be null for general tasks like tana todos)
     const project = item.project_id ? bb.getProject(item.project_id) : null;
-
-    if (!project?.local_path) {
-      result.skipped.push({
-        itemId: item.item_id,
-        title: item.title,
-        reason: item.project_id
-          ? `project "${item.project_id}" has no local_path`
-          : 'no project assigned',
-      });
-      continue;
-    }
+    const resolvedWorkDir = project?.local_path ?? process.env.HOME ?? '/tmp';
 
     // Register agent and claim work
     let sessionId: string;
     try {
       const agent = bb.registerAgent({
         name: `dispatch-${item.item_id}`,
-        project: item.project_id!,
+        project: item.project_id ?? 'general',
         work: item.item_id,
       });
       sessionId = agent.session_id;
@@ -250,12 +231,12 @@ export async function dispatch(
     bb.appendEvent({
       actorId: sessionId,
       targetId: item.item_id,
-      summary: `Dispatching "${item.title}" to Claude Code in ${project.local_path}`,
+      summary: `Dispatching "${item.title}" to Claude Code in ${resolvedWorkDir}`,
       metadata: {
         itemId: item.item_id,
         projectId: item.project_id,
         priority: item.priority,
-        workDir: project.local_path,
+        workDir: resolvedWorkDir,
         fireAndForget: !!opts.fireAndForget,
       },
     });
@@ -290,7 +271,7 @@ export async function dispatch(
           `=== Worker Spawned ===`,
           `Time: ${new Date().toISOString()}`,
           `Item: ${item.item_id} — ${item.title}`,
-          `Work Dir: ${project.local_path}`,
+          `Work Dir: ${resolvedWorkDir}`,
           `===`,
           '',
         ].join('\n'));
@@ -298,7 +279,7 @@ export async function dispatch(
         const logFd = openSync(logPath, 'a');
         try {
           const proc = Bun.spawn(args, {
-            cwd: project.local_path,
+            cwd: resolvedWorkDir,
             stdout: 'ignore',
             stderr: logFd,
             stdin: 'ignore',
@@ -312,7 +293,7 @@ export async function dispatch(
         result.dispatched.push({
           itemId: item.item_id,
           title: item.title,
-          projectId: item.project_id!,
+          projectId: item.project_id ?? '(none)',
           sessionId,
           exitCode: 0,
           completed: false, // Not yet — worker will handle it
@@ -340,7 +321,7 @@ export async function dispatch(
         try {
           const success = await runSpecFlowPhase(bb, item, {
             project_id: item.project_id!,
-            local_path: project.local_path,
+            local_path: project?.local_path ?? resolvedWorkDir,
           }, sessionId);
 
           const durationMs = Date.now() - startTime;
@@ -405,7 +386,7 @@ export async function dispatch(
 
       // Worktree setup for GitHub items
       const ghMeta = parseGithubMeta(item.metadata);
-      let workDir = project.local_path;
+      let workDir = resolvedWorkDir;
       let worktreePath: string | null = null;
       let branch: string | null = null;
       let mainBranch: string | null = null;
@@ -585,7 +566,7 @@ export async function dispatch(
           result.dispatched.push({
             itemId: item.item_id,
             title: item.title,
-            projectId: item.project_id!,
+            projectId: item.project_id ?? '(none)',
             sessionId,
             exitCode: 0,
             completed: true,

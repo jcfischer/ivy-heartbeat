@@ -155,18 +155,9 @@ export function registerDispatchWorkerCommand(
         process.exit(1);
       }
 
-      // Resolve project path
+      // Resolve project path (fallback to $HOME for project-less items like tana todos)
       const project = item.project_id ? bb.getProject(item.project_id) : null;
-      if (!project?.local_path) {
-        bb.appendEvent({
-          actorId: sessionId,
-          targetId: itemId,
-          summary: `Worker: no local_path for project "${item.project_id}"`,
-        });
-        try { bb.releaseWorkItem(itemId, sessionId); } catch { /* best effort */ }
-        try { bb.deregisterAgent(sessionId); } catch { /* best effort */ }
-        process.exit(1);
-      }
+      const resolvedWorkDir = project?.local_path ?? process.env.HOME ?? '/tmp';
 
       // Determine if this is a SpecFlow work item
       const sfMeta = parseSpecFlowMeta(item.metadata);
@@ -174,7 +165,7 @@ export function registerDispatchWorkerCommand(
         try {
           const success = await runSpecFlowPhase(bb, item, {
             project_id: item.project_id!,
-            local_path: project.local_path,
+            local_path: project?.local_path ?? resolvedWorkDir,
           }, sessionId);
 
           if (success) {
@@ -209,7 +200,7 @@ export function registerDispatchWorkerCommand(
 
       // Determine if this is a GitHub work item
       const ghMeta = parseGithubMeta(item.metadata);
-      let workDir = project.local_path;
+      let workDir = resolvedWorkDir;
       let worktreePath: string | null = null;
       let branch: string | null = null;
       let mainBranch: string | null = null;
