@@ -181,12 +181,23 @@ export async function runSpecFlowPhase(
   const { existsSync } = await import('node:fs');
   const specflowDbPath = join(worktreePath, '.specify', 'specflow.db');
   if (!existsSync(specflowDbPath)) {
-    // specflow init requires a description or --from-spec/--from-features.
-    // Use app-context.md if available, otherwise use the project ID.
-    const appContextPath = join(worktreePath, '.specify', 'app-context.md');
-    const initArgs = existsSync(appContextPath)
-      ? ['init', '--from-spec', appContextPath]
-      : ['init', project.project_id];
+    // specflow init requires --from-features (batch-safe) or --from-spec (broken
+    // in compiled binary — see specflow-bundle#9). Try features.json first.
+    const featuresPath = join(worktreePath, 'features.json');
+    const initArgs = existsSync(featuresPath)
+      ? ['init', '--from-features', featuresPath]
+      : null;
+
+    if (!initArgs) {
+      bb.appendEvent({
+        actorId: sessionId,
+        targetId: item.item_id,
+        summary: `specflow init skipped: no features.json in worktree (specflow-bundle#9)`,
+        metadata: { worktreePath },
+      });
+      return false;
+    }
+
     const initResult = await spawner(initArgs, worktreePath, 60_000);
     if (initResult.exitCode !== 0) {
       bb.appendEvent({

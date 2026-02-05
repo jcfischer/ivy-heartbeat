@@ -453,11 +453,11 @@ describe('cost guard integration', () => {
     // First run
     await runChecks(ctx.bb, agent.session_id, { configPath });
 
-    // Second run with force: should NOT skip
+    // Second run with force: should NOT skip, all items run regardless of due status
     const second = await runChecks(ctx.bb, agent.session_id, { configPath, force: true });
     expect(second.guardSkipped).toBeFalsy();
-    // Items are not due, so skipped count should be 2 (guard bypassed but isDue still applies)
-    expect(second.skipped).toBe(2);
+    expect(second.skipped).toBe(0);
+    expect(second.checked).toBe(2);
   });
 
   test('guard does not interfere with dry-run', async () => {

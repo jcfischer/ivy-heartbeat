@@ -32,8 +32,10 @@ export async function runChecks(
   const enabled = items.filter((item) => item.enabled);
   const disabledCount = items.length - enabled.length;
 
-  // Check due status for all enabled items
-  const dueResults: DueCheckResult[] = enabled.map((item) => isDue(item, bb));
+  // Check due status for all enabled items (--force overrides to all due)
+  const dueResults: DueCheckResult[] = opts.force
+    ? enabled.map((item) => ({ item, isDue: true, lastRun: null, reason: 'forced' }))
+    : enabled.map((item) => isDue(item, bb));
 
   // In dry-run mode, return without evaluating
   if (opts.dryRun) {

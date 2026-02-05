@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { createTestContext, cleanupTestContext, type TestContext } from './helpers.ts';
 import { registerProject } from 'ivy-blackboard/src/project';
 import {
@@ -73,10 +74,18 @@ beforeEach(() => {
   spawnerCalls = [];
   seedProject('test-proj', '/tmp/test-project');
 
+  // Create mock worktree with specflow.db so init is skipped
+  mkdirSync('/tmp/mock-worktree/.specify', { recursive: true });
+  writeFileSync('/tmp/mock-worktree/.specify/specflow.db', '');
+
   // Mock worktree ops so tests don't call real git
   setWorktreeOps({
     createWorktree: async (_proj, _branch, _id) => '/tmp/mock-worktree',
-    ensureWorktree: async (_proj, worktreePath, _branch) => worktreePath,
+    ensureWorktree: async (_proj, worktreePath, _branch) => {
+      mkdirSync(`${worktreePath}/.specify`, { recursive: true });
+      writeFileSync(`${worktreePath}/.specify/specflow.db`, '');
+      return worktreePath;
+    },
     removeWorktree: async () => {},
     commitAll: async () => null,
     pushBranch: async () => {},
@@ -89,6 +98,9 @@ afterEach(() => {
   resetSpecFlowSpawner();
   resetWorktreeOps();
   cleanupTestContext(ctx);
+  for (const p of ['/tmp/mock-worktree', '/tmp/worktree', '/tmp/my-worktree']) {
+    try { rmSync(p, { recursive: true }); } catch { /* best effort */ }
+  }
 });
 
 // ─── Tests ────────────────────────────────────────────────────────────
