@@ -129,7 +129,7 @@ export async function runSpecFlowPhase(
   item: BlackboardWorkItem,
   project: { project_id: string; local_path: string },
   sessionId: string
-): Promise<void> {
+): Promise<boolean> {
   const meta = parseSpecFlowMeta(item.metadata);
   if (!meta) {
     throw new Error('Work item has no valid SpecFlow metadata');
@@ -177,6 +177,28 @@ export async function runSpecFlowPhase(
     metadata: { worktreePath, phase },
   });
 
+  // ─── Ensure specflow is initialized in the worktree ─────────────
+  const { existsSync } = await import('node:fs');
+  const specflowDbPath = join(worktreePath, '.specify', 'specflow.db');
+  if (!existsSync(specflowDbPath)) {
+    const initResult = await spawner(['init'], worktreePath, 60_000);
+    if (initResult.exitCode !== 0) {
+      bb.appendEvent({
+        actorId: sessionId,
+        targetId: item.item_id,
+        summary: `specflow init failed (exit ${initResult.exitCode}) in worktree`,
+        metadata: { stderr: initResult.stderr.slice(0, 500) },
+      });
+      return false;
+    }
+    bb.appendEvent({
+      actorId: sessionId,
+      targetId: item.item_id,
+      summary: `Initialized specflow database in worktree`,
+      metadata: { worktreePath },
+    });
+  }
+
   // ─── Build CLI arguments ─────────────────────────────────────────
   const cliArgs = buildCliArgs(phase, featureId, meta);
 
@@ -191,7 +213,7 @@ export async function runSpecFlowPhase(
       summary: `SpecFlow phase "${phase}" timed out for ${featureId}`,
       metadata: { phase, featureId, timeout: SPECFLOW_TIMEOUT_MS },
     });
-    return; // Work item will be released by caller
+    return false;
   }
 
   if (result.exitCode !== 0) {
@@ -201,7 +223,7 @@ export async function runSpecFlowPhase(
       summary: `SpecFlow phase "${phase}" failed (exit ${result.exitCode}) for ${featureId}`,
       metadata: { phase, exitCode: result.exitCode, stderr: result.stderr.slice(0, 500) },
     });
-    return; // Work item will be released by caller
+    return false;
   }
 
   bb.appendEvent({
@@ -235,9 +257,9 @@ export async function runSpecFlowPhase(
           summary: `Quality gate failed (${gateResult.score}%) — max retries exceeded for ${featureId} phase "${phase}"`,
           metadata: { phase, score: gateResult.score, maxRetries: MAX_RETRIES },
         });
-        // Mark as failed — caller will complete the item
+        // Mark as failed — caller will handle the item
       }
-      return;
+      return false;
     }
 
     bb.appendEvent({
@@ -267,7 +289,7 @@ export async function runSpecFlowPhase(
     } catch {
       // Non-fatal — staleness cleanup will handle it
     }
-    return;
+    return true;
   }
 
   // ─── Chain next phase ────────────────────────────────────────────
@@ -281,6 +303,8 @@ export async function runSpecFlowPhase(
       metadata: { currentPhase: phase, nextPhase: next },
     });
   }
+
+  return true;
 }
 
 // ─── CLI argument builder ──────────────────────────────────────────────

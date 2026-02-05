@@ -22,7 +22,11 @@ function mockSpawner(
 ): SpecFlowSpawner {
   return async (args, cwd, _timeoutMs) => {
     spawnerCalls.push({ args, cwd });
-    const key = args[0]; // phase name or 'eval'
+    const key = args[0]; // phase name, 'eval', or 'init'
+    // Always succeed for init unless explicitly overridden
+    if (key === 'init' && !responses[key]) {
+      return { exitCode: 0, stdout: '', stderr: '' };
+    }
     return responses[key] ?? { exitCode: 0, stdout: '', stderr: '' };
   };
 }
@@ -111,11 +115,14 @@ describe('specflow-runner', () => {
         'test-session'
       );
 
-      // Should have called specflow specify --batch
-      expect(spawnerCalls[0].args).toEqual(['specify', 'F-001', '--batch']);
+      // Should have called specflow specify --batch (after init)
+      const specifyCall = spawnerCalls.find((c) => c.args[0] === 'specify');
+      expect(specifyCall).toBeDefined();
+      expect(specifyCall!.args).toEqual(['specify', 'F-001', '--batch']);
 
       // Should have called eval
-      expect(spawnerCalls[1].args[0]).toBe('eval');
+      const evalCall = spawnerCalls.find((c) => c.args[0] === 'eval');
+      expect(evalCall).toBeDefined();
 
       // Should have created a plan work item
       const items = ctx.bb.listWorkItems({ all: true });
@@ -151,8 +158,10 @@ describe('specflow-runner', () => {
         'test-session'
       );
 
-      // Should have called specflow plan
-      expect(spawnerCalls[0].args).toEqual(['plan', 'F-001']);
+      // Should have called specflow plan (after init)
+      const planCall = spawnerCalls.find((c) => c.args[0] === 'plan');
+      expect(planCall).toBeDefined();
+      expect(planCall!.args).toEqual(['plan', 'F-001']);
 
       // Should chain tasks phase
       const items = ctx.bb.listWorkItems({ all: true });
@@ -186,10 +195,12 @@ describe('specflow-runner', () => {
         'test-session'
       );
 
-      expect(spawnerCalls[0].args).toEqual(['tasks', 'F-001']);
+      const tasksCall = spawnerCalls.find((c) => c.args[0] === 'tasks');
+      expect(tasksCall).toBeDefined();
+      expect(tasksCall!.args).toEqual(['tasks', 'F-001']);
 
-      // No eval call — tasks has no quality gate
-      expect(spawnerCalls).toHaveLength(1);
+      // No eval call — tasks has no quality gate (only init + tasks)
+      expect(spawnerCalls.filter((c) => c.args[0] !== 'init')).toHaveLength(1);
 
       // Should chain implement
       const items = ctx.bb.listWorkItems({ all: true });
@@ -405,7 +416,9 @@ describe('specflow-runner', () => {
         'test-session'
       );
 
-      expect(spawnerCalls[0].args).toEqual(['complete', 'F-001']);
+      const completeCall = spawnerCalls.find((c) => c.args[0] === 'complete');
+      expect(completeCall).toBeDefined();
+      expect(completeCall!.args).toEqual(['complete', 'F-001']);
 
       // No chained items — pipeline is done
       const items = ctx.bb.listWorkItems({ all: true });

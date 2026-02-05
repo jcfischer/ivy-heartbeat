@@ -338,30 +338,46 @@ export async function dispatch(
       const sfMeta = parseSpecFlowMeta(item.metadata);
       if (sfMeta) {
         try {
-          await runSpecFlowPhase(bb, item, {
+          const success = await runSpecFlowPhase(bb, item, {
             project_id: item.project_id!,
             local_path: project.local_path,
           }, sessionId);
 
-          bb.completeWorkItem(item.item_id, sessionId);
-
           const durationMs = Date.now() - startTime;
-          bb.appendEvent({
-            actorId: sessionId,
-            targetId: item.item_id,
-            summary: `SpecFlow phase "${sfMeta.specflow_phase}" completed for ${sfMeta.specflow_feature_id} (${Math.round(durationMs / 1000)}s)`,
-            metadata: { phase: sfMeta.specflow_phase, durationMs },
-          });
 
-          result.dispatched.push({
-            itemId: item.item_id,
-            title: item.title,
-            projectId: item.project_id!,
-            sessionId,
-            exitCode: 0,
-            completed: true,
-            durationMs,
-          });
+          if (success) {
+            bb.completeWorkItem(item.item_id, sessionId);
+            bb.appendEvent({
+              actorId: sessionId,
+              targetId: item.item_id,
+              summary: `SpecFlow phase "${sfMeta.specflow_phase}" completed for ${sfMeta.specflow_feature_id} (${Math.round(durationMs / 1000)}s)`,
+              metadata: { phase: sfMeta.specflow_phase, durationMs },
+            });
+
+            result.dispatched.push({
+              itemId: item.item_id,
+              title: item.title,
+              projectId: item.project_id!,
+              sessionId,
+              exitCode: 0,
+              completed: true,
+              durationMs,
+            });
+          } else {
+            try { bb.releaseWorkItem(item.item_id, sessionId); } catch { /* best effort */ }
+            bb.appendEvent({
+              actorId: sessionId,
+              targetId: item.item_id,
+              summary: `SpecFlow phase "${sfMeta.specflow_phase}" failed for ${sfMeta.specflow_feature_id} (${Math.round(durationMs / 1000)}s)`,
+              metadata: { phase: sfMeta.specflow_phase, durationMs },
+            });
+
+            result.errors.push({
+              itemId: item.item_id,
+              title: item.title,
+              error: `SpecFlow phase "${sfMeta.specflow_phase}" failed`,
+            });
+          }
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
           const durationMs = Date.now() - startTime;

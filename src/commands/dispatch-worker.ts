@@ -139,17 +139,26 @@ export function registerDispatchWorkerCommand(
       const sfMeta = parseSpecFlowMeta(item.metadata);
       if (sfMeta) {
         try {
-          await runSpecFlowPhase(bb, item, {
+          const success = await runSpecFlowPhase(bb, item, {
             project_id: item.project_id!,
             local_path: project.local_path,
           }, sessionId);
 
-          bb.completeWorkItem(itemId, sessionId);
-          bb.appendEvent({
-            actorId: sessionId,
-            targetId: itemId,
-            summary: `SpecFlow phase "${sfMeta.specflow_phase}" completed for ${sfMeta.specflow_feature_id}`,
-          });
+          if (success) {
+            bb.completeWorkItem(itemId, sessionId);
+            bb.appendEvent({
+              actorId: sessionId,
+              targetId: itemId,
+              summary: `SpecFlow phase "${sfMeta.specflow_phase}" completed for ${sfMeta.specflow_feature_id}`,
+            });
+          } else {
+            try { bb.releaseWorkItem(itemId, sessionId); } catch { /* best effort */ }
+            bb.appendEvent({
+              actorId: sessionId,
+              targetId: itemId,
+              summary: `SpecFlow phase "${sfMeta.specflow_phase}" failed for ${sfMeta.specflow_feature_id}`,
+            });
+          }
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
           try { bb.releaseWorkItem(itemId, sessionId); } catch { /* best effort */ }
