@@ -20,12 +20,20 @@ import {
   claimWorkItem,
   completeWorkItem,
   releaseWorkItem,
+  blockWorkItem,
+  unblockWorkItem,
+  setWaitingForResponse,
+  updateWorkItemMetadata,
   type CreateWorkItemOptions,
   type CreateWorkItemResult,
   type ListWorkItemsOptions,
   type ClaimWorkItemResult,
   type CompleteWorkItemResult,
   type ReleaseWorkItemResult,
+  type BlockWorkItemResult,
+  type UnblockWorkItemResult,
+  type SetWaitingResult,
+  type UpdateWorkItemMetadataResult,
 } from 'ivy-blackboard/src/work';
 import { listProjects, type ProjectWithCounts } from 'ivy-blackboard/src/project';
 import type { BlackboardProject, BlackboardWorkItem } from 'ivy-blackboard/src/types';
@@ -86,6 +94,38 @@ export class Blackboard {
 
   releaseWorkItem(itemId: string, sessionId: string): ReleaseWorkItemResult {
     return releaseWorkItem(this.db, itemId, sessionId);
+  }
+
+  blockWorkItem(itemId: string, opts?: { blockedBy?: string }): BlockWorkItemResult {
+    return blockWorkItem(this.db, itemId, opts);
+  }
+
+  unblockWorkItem(itemId: string): UnblockWorkItemResult {
+    return unblockWorkItem(this.db, itemId);
+  }
+
+  setWaitingForResponse(itemId: string, opts?: { blockedBy?: string }): SetWaitingResult {
+    return setWaitingForResponse(this.db, itemId, opts);
+  }
+
+  updateWorkItemMetadata(itemId: string, updates: Record<string, unknown>): UpdateWorkItemMetadataResult {
+    return updateWorkItemMetadata(this.db, itemId, updates);
+  }
+
+  /**
+   * Complete a waiting_for_response item directly (no session required).
+   * Used by the issue watcher evaluator when a watched dependency resolves.
+   */
+  completeWaitingItem(itemId: string): void {
+    const now = new Date().toISOString();
+    const result = this.db.query(
+      "UPDATE work_items SET status = 'completed', completed_at = ? WHERE item_id = ? AND status = 'waiting_for_response'"
+    ).run(now, itemId);
+    if (result.changes > 0) {
+      this.db.query(
+        "INSERT INTO events (timestamp, event_type, actor_id, target_id, target_type, summary) VALUES (?, 'work_completed', 'issue-watcher', ?, 'work_item', ?)"
+      ).run(now, itemId, `Waiting item "${itemId}" completed by issue watcher (dependency resolved)`);
+    }
   }
 
   // ─── Projects (delegated to ivy-blackboard) ──────────────────────────
@@ -157,6 +197,10 @@ export type {
   ClaimWorkItemResult,
   CompleteWorkItemResult,
   ReleaseWorkItemResult,
+  BlockWorkItemResult,
+  UnblockWorkItemResult,
+  SetWaitingResult,
+  UpdateWorkItemMetadataResult,
 } from 'ivy-blackboard/src/work';
 
 export type { ProjectWithCounts } from 'ivy-blackboard/src/project';

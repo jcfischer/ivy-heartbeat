@@ -6,6 +6,7 @@ import { evaluateGithubIssues } from '../evaluators/github-issues.ts';
 import { evaluateAgentDispatch } from '../evaluators/agent-dispatch.ts';
 import { evaluateSpecFlowCleanup } from '../evaluators/specflow-cleanup.ts';
 import { evaluateTanaTodos } from '../evaluators/tana-todos.ts';
+import { evaluateGithubIssueWatcher } from '../evaluators/github-issue-watcher.ts';
 
 export type Evaluator = (item: ChecklistItem) => Promise<CheckResult>;
 
@@ -18,6 +19,8 @@ const evaluators: Record<CheckType, Evaluator> = {
   email: evaluateEmail,
 
   github_issues: evaluateGithubIssues,
+
+  github_issue_watcher: evaluateGithubIssueWatcher,
 
   tana_todos: evaluateTanaTodos,
 
