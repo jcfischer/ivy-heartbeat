@@ -82,6 +82,23 @@ function parseGithubMeta(metadata: string | null): {
 }
 
 /**
+ * Cross-project dependency instructions injected into agent prompts.
+ */
+const CROSS_PROJECT_DEPENDENCY_INSTRUCTIONS = `
+## Cross-Project Dependencies
+
+If you discover that completing this task requires changes in another project:
+1. Create a GitHub issue in the target project: \`gh issue create --repo owner/repo --title "..." --body "..."\`
+2. Output a structured dependency marker at the end of your summary:
+   CROSS_PROJECT_DEPENDENCY:
+   repo: owner/repo
+   issue: <number>
+   reason: <why this is needed>
+   resume_context: <what to do when resolved>
+3. Your current work item will be paused until the dependency resolves.
+`;
+
+/**
  * Build the prompt for a Claude Code session working on a work item.
  */
 function buildPrompt(item: BlackboardWorkItem, sessionId: string): string {
@@ -96,6 +113,7 @@ function buildPrompt(item: BlackboardWorkItem, sessionId: string): string {
   parts.push(
     `\nWork item ID: ${item.item_id}`,
     `Session ID: ${sessionId}`,
+    CROSS_PROJECT_DEPENDENCY_INSTRUCTIONS,
     `\nWhen you are done, summarize what you accomplished.`,
   );
 

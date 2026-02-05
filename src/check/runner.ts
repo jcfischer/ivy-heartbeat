@@ -7,6 +7,7 @@ import { dispatchAlert } from '../alert/dispatcher.ts';
 import { setBlackboardAccessor, resetBlackboardAccessor } from '../evaluators/github-issues.ts';
 import { setTanaBlackboardAccessor, resetTanaBlackboardAccessor } from '../evaluators/tana-todos.ts';
 import { setDispatchBlackboard, resetDispatchBlackboard } from '../evaluators/agent-dispatch.ts';
+import { setWatcherBlackboardAccessor, resetWatcherBlackboardAccessor } from '../evaluators/github-issue-watcher.ts';
 import type {
   CheckOptions,
   CheckResult,
@@ -88,6 +89,7 @@ export async function runChecks(
   setBlackboardAccessor(bb);
   setTanaBlackboardAccessor(bb);
   setDispatchBlackboard(bb);
+  setWatcherBlackboardAccessor(bb);
 
   const results: CheckResult[] = [];
   let alerts = 0;
@@ -158,6 +160,7 @@ export async function runChecks(
   resetBlackboardAccessor();
   resetTanaBlackboardAccessor();
   resetDispatchBlackboard();
+  resetWatcherBlackboardAccessor();
 
   return {
     timestamp: new Date().toISOString(),
