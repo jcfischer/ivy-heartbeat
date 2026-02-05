@@ -8,8 +8,10 @@ import {
   resetSpecFlowSpawner,
   setWorktreeOps,
   resetWorktreeOps,
+  detectMissingArtifacts,
   type SpecFlowSpawner,
 } from '../src/scheduler/specflow-runner.ts';
+import { setLauncher, resetLauncher } from '../src/scheduler/launcher.ts';
 import type { SpecFlowWorkItemMetadata } from '../src/scheduler/specflow-types.ts';
 import type { BlackboardWorkItem } from 'ivy-blackboard/src/types';
 
@@ -97,6 +99,7 @@ beforeEach(() => {
 afterEach(() => {
   resetSpecFlowSpawner();
   resetWorktreeOps();
+  resetLauncher();
   cleanupTestContext(ctx);
   for (const p of ['/tmp/mock-worktree', '/tmp/worktree', '/tmp/my-worktree']) {
     try { rmSync(p, { recursive: true }); } catch { /* best effort */ }
@@ -435,6 +438,196 @@ describe('specflow-runner', () => {
       // No chained items — pipeline is done
       const items = ctx.bb.listWorkItems({ all: true });
       expect(items).toHaveLength(0);
+    });
+
+    test('generates missing artifacts and retries on complete failure', async () => {
+      const meta = makeMeta({
+        specflow_phase: 'complete',
+        worktree_path: '/tmp/mock-worktree',
+        main_branch: 'main',
+      });
+      const item = makeWorkItem(meta);
+
+      // Create spec dir so findFeatureDir can find it
+      const specDir = '/tmp/mock-worktree/.specify/specs/f-001-test-feature';
+      mkdirSync(specDir, { recursive: true });
+
+      // First complete call fails with missing artifacts, second succeeds
+      let completeCallCount = 0;
+      setSpecFlowSpawner(async (args, cwd, _timeout) => {
+        spawnerCalls.push({ args, cwd });
+        if (args[0] === 'complete') {
+          completeCallCount++;
+          if (completeCallCount === 1) {
+            return { exitCode: 1, stdout: '', stderr: 'Error: missing required artifact: docs.md is missing, verify.md not found' };
+          }
+          return { exitCode: 0, stdout: '', stderr: '' };
+        }
+        return { exitCode: 0, stdout: '', stderr: '' };
+      });
+
+      // Mock launcher: writes the artifact files
+      let launcherCalls: string[] = [];
+      setLauncher(async (opts) => {
+        launcherCalls.push(opts.sessionId);
+        // Simulate Claude creating the files
+        if (opts.sessionId.includes('docs')) {
+          writeFileSync(`${specDir}/docs.md`, '# Docs\nGenerated docs.');
+        } else if (opts.sessionId.includes('verify')) {
+          writeFileSync(`${specDir}/verify.md`, '# Verify\nAll tests pass.');
+        }
+        return { exitCode: 0, stdout: '', stderr: '' };
+      });
+
+      ctx.bb.registerAgent({ name: 'test', project: 'test-proj', work: item.item_id });
+
+      const result = await runSpecFlowPhase(
+        ctx.bb,
+        item,
+        { project_id: 'test-proj', local_path: '/tmp/test-project' },
+        'test-session'
+      );
+
+      expect(result).toBe(true);
+      // Launcher should have been called twice (docs.md + verify.md)
+      expect(launcherCalls).toHaveLength(2);
+      expect(launcherCalls[0]).toContain('docs');
+      expect(launcherCalls[1]).toContain('verify');
+      // specflow complete should have been called at least twice (fail + retry)
+      expect(completeCallCount).toBeGreaterThanOrEqual(2);
+    });
+
+    test('returns false when artifact generation fails', async () => {
+      const meta = makeMeta({
+        specflow_phase: 'complete',
+        worktree_path: '/tmp/mock-worktree',
+        main_branch: 'main',
+      });
+      const item = makeWorkItem(meta);
+
+      mkdirSync('/tmp/mock-worktree/.specify/specs/f-001-test-feature', { recursive: true });
+
+      setSpecFlowSpawner(async (args, cwd, _timeout) => {
+        spawnerCalls.push({ args, cwd });
+        if (args[0] === 'complete') {
+          return { exitCode: 1, stdout: '', stderr: 'docs.md is missing' };
+        }
+        return { exitCode: 0, stdout: '', stderr: '' };
+      });
+
+      // Mock launcher that fails
+      setLauncher(async () => {
+        return { exitCode: 1, stdout: '', stderr: 'Claude failed' };
+      });
+
+      ctx.bb.registerAgent({ name: 'test', project: 'test-proj', work: item.item_id });
+
+      const result = await runSpecFlowPhase(
+        ctx.bb,
+        item,
+        { project_id: 'test-proj', local_path: '/tmp/test-project' },
+        'test-session'
+      );
+
+      expect(result).toBe(false);
+    });
+
+    test('returns false when retry fails after artifact generation', async () => {
+      const meta = makeMeta({
+        specflow_phase: 'complete',
+        worktree_path: '/tmp/mock-worktree',
+        main_branch: 'main',
+      });
+      const item = makeWorkItem(meta);
+
+      const specDir = '/tmp/mock-worktree/.specify/specs/f-001-test-feature';
+      mkdirSync(specDir, { recursive: true });
+
+      // Complete always fails
+      setSpecFlowSpawner(async (args, cwd, _timeout) => {
+        spawnerCalls.push({ args, cwd });
+        if (args[0] === 'complete') {
+          return { exitCode: 1, stdout: '', stderr: 'verify.md is missing' };
+        }
+        return { exitCode: 0, stdout: '', stderr: '' };
+      });
+
+      // Launcher succeeds and creates the file
+      setLauncher(async (opts) => {
+        writeFileSync(`${specDir}/verify.md`, '# Verify');
+        return { exitCode: 0, stdout: '', stderr: '' };
+      });
+
+      ctx.bb.registerAgent({ name: 'test', project: 'test-proj', work: item.item_id });
+
+      const result = await runSpecFlowPhase(
+        ctx.bb,
+        item,
+        { project_id: 'test-proj', local_path: '/tmp/test-project' },
+        'test-session'
+      );
+
+      // Should fail because retry also fails
+      expect(result).toBe(false);
+    });
+
+    test('returns false when complete fails for non-artifact reason', async () => {
+      const meta = makeMeta({
+        specflow_phase: 'complete',
+        worktree_path: '/tmp/mock-worktree',
+        main_branch: 'main',
+      });
+      const item = makeWorkItem(meta);
+
+      setSpecFlowSpawner(async (args, cwd, _timeout) => {
+        spawnerCalls.push({ args, cwd });
+        if (args[0] === 'complete') {
+          return { exitCode: 1, stdout: '', stderr: 'database connection error' };
+        }
+        return { exitCode: 0, stdout: '', stderr: '' };
+      });
+
+      ctx.bb.registerAgent({ name: 'test', project: 'test-proj', work: item.item_id });
+
+      const result = await runSpecFlowPhase(
+        ctx.bb,
+        item,
+        { project_id: 'test-proj', local_path: '/tmp/test-project' },
+        'test-session'
+      );
+
+      // Should fail — no artifact generation attempted
+      expect(result).toBe(false);
+    });
+  });
+
+  describe('detectMissingArtifacts', () => {
+    test('detects docs.md missing from stderr', () => {
+      const result = detectMissingArtifacts('', 'Error: docs.md is missing');
+      expect(result).toEqual(['docs.md']);
+    });
+
+    test('detects verify.md not found from stdout', () => {
+      const result = detectMissingArtifacts('verify.md not found', '');
+      expect(result).toEqual(['verify.md']);
+    });
+
+    test('detects both missing', () => {
+      const result = detectMissingArtifacts(
+        'Required: docs.md not found, verify.md not found',
+        ''
+      );
+      expect(result).toEqual(['docs.md', 'verify.md']);
+    });
+
+    test('detects generic missing artifacts message', () => {
+      const result = detectMissingArtifacts('', 'missing artifacts for feature');
+      expect(result).toEqual(['docs.md', 'verify.md']);
+    });
+
+    test('returns empty for unrelated errors', () => {
+      const result = detectMissingArtifacts('', 'database connection error');
+      expect(result).toEqual([]);
     });
   });
 });

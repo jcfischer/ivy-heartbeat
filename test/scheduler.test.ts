@@ -111,27 +111,30 @@ describe('dispatch', () => {
     expect(result.dispatched[0].itemId).toBe('task-p1');
   });
 
-  test('skips items with no project assigned', async () => {
-    // Create work item without a project
+  test('dispatches items with no project using HOME as workdir', async () => {
+    // Create work item without a project — should dispatch with $HOME fallback
     createWorkItem(ctx.bb.db, { id: 'orphan', title: 'No project' });
 
     const result = await dispatch(ctx.bb, defaultOpts());
 
-    expect(result.dispatched).toHaveLength(0);
-    expect(result.skipped).toHaveLength(1);
-    expect(result.skipped[0].reason).toBe('no project assigned');
+    expect(result.dispatched).toHaveLength(1);
+    expect(result.dispatched[0].itemId).toBe('orphan');
+    expect(result.dispatched[0].projectId).toBe('(none)');
+    expect(launchCalls).toHaveLength(1);
+    expect(launchCalls[0].workDir).toBe(process.env.HOME);
   });
 
-  test('skips items whose project has no local_path', async () => {
-    // Register project without a path
+  test('dispatches items whose project has no local_path using HOME', async () => {
+    // Register project without a path — should dispatch with $HOME fallback
     registerProject(ctx.bb.db, { id: 'remote-only', name: 'Remote Only' });
     seedWorkItem('task-remote', 'remote-only');
 
     const result = await dispatch(ctx.bb, defaultOpts());
 
-    expect(result.dispatched).toHaveLength(0);
-    expect(result.skipped).toHaveLength(1);
-    expect(result.skipped[0].reason).toContain('no local_path');
+    expect(result.dispatched).toHaveLength(1);
+    expect(result.dispatched[0].itemId).toBe('task-remote');
+    expect(launchCalls).toHaveLength(1);
+    expect(launchCalls[0].workDir).toBe(process.env.HOME);
   });
 
   test('dry run does not claim or launch', async () => {

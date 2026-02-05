@@ -1,6 +1,6 @@
 import type { ProjectWithCounts } from '../blackboard.ts';
 
-// ─── Tana MCP response types ─────────────────────────────────────────────
+// ─── Tana local API response types ───────────────────────────────────────
 
 export interface TanaNode {
   id: string;
@@ -21,8 +21,8 @@ export interface TanaNodeContent {
 // ─── TanaAccessor interface (injectable for testing) ──────────────────────
 
 /**
- * Injectable Tana MCP accessor — mirrors the BlackboardAccessor pattern.
- * Each method maps to a tana-local MCP tool.
+ * Injectable Tana accessor — mirrors the BlackboardAccessor pattern.
+ * Each method maps to a Tana local API endpoint (localhost:8262).
  */
 export interface TanaAccessor {
   /** search_nodes with hasType filter for ivy-todo tag, unchecked only */

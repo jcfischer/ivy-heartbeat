@@ -1,74 +1,112 @@
 import type { TanaAccessor, TanaNode, TanaNodeContent } from './tana-types.ts';
 
-// ─── Default TanaAccessor implementation (MCP stdio subprocess) ───────────
+// ─── Tana local API client (http://localhost:8262) ───────────────────────
 
 /**
- * Default TanaAccessor that calls tana-local MCP tools via Bun.spawn.
+ * Default TanaAccessor that calls Tana Desktop's local REST API directly.
  *
- * The heartbeat runs as a standalone CLI process, so it cannot call
- * MCP tools directly. This implementation shells out to the tana-local
- * MCP helper, similar to how github-issues uses `gh` CLI.
+ * Reads bearer token from ~/.config/supertag/config.json (same config
+ * used by the supertag CLI). No subprocess spawning needed.
  *
  * In tests, this is entirely replaced by a mock via setTanaAccessor().
  */
-async function mcpCall(tool: string, params: Record<string, unknown>): Promise<unknown> {
-  const input = JSON.stringify({ tool, params });
 
-  const proc = Bun.spawn(
-    ['bun', 'run', '--silent', new URL('./tana-mcp-client.ts', import.meta.url).pathname, '--'],
-    {
-      stdin: new Blob([input]),
-      stdout: 'pipe',
-      stderr: 'pipe',
-    }
-  );
+const TANA_LOCAL_API = 'http://localhost:8262';
+const CONFIG_PATH = `${process.env.HOME}/.config/supertag/config.json`;
 
-  const timeoutId = setTimeout(() => proc.kill(), 10_000);
+let cachedBearerToken: string | null = null;
 
+function getBearerToken(): string {
+  if (cachedBearerToken) return cachedBearerToken;
   try {
-    const output = await new Response(proc.stdout).text();
-    await proc.exited;
-    clearTimeout(timeoutId);
-
-    if (proc.exitCode !== 0) {
-      const stderr = await new Response(proc.stderr).text();
-      throw new Error(`tana-local MCP call failed (exit ${proc.exitCode}): ${stderr.slice(0, 200)}`);
-    }
-
-    return JSON.parse(output);
+    const fs = require('node:fs');
+    const raw = fs.readFileSync(CONFIG_PATH, 'utf-8');
+    const config = JSON.parse(raw);
+    const token = config.localApi?.bearerToken ?? config.bearerToken ?? '';
+    if (!token) throw new Error('No bearer token found in supertag config');
+    cachedBearerToken = token;
+    return token;
   } catch (err) {
-    clearTimeout(timeoutId);
-    if (err instanceof SyntaxError) {
-      throw new Error('tana-local MCP server returned invalid JSON');
-    }
-    throw err;
+    throw new Error(`Failed to read Tana bearer token from ${CONFIG_PATH}: ${(err as Error).message}`);
   }
+}
+
+/**
+ * Serialize nested objects into bracket notation query params.
+ * e.g. { and: [{ hasType: 'X' }] } → query[and][0][hasType]=X
+ */
+function serializeDeepObject(prefix: string, obj: unknown, out: Record<string, string>): void {
+  if (obj === null || obj === undefined) return;
+  if (Array.isArray(obj)) {
+    for (let i = 0; i < obj.length; i++) {
+      serializeDeepObject(`${prefix}[${i}]`, obj[i], out);
+    }
+  } else if (typeof obj === 'object') {
+    for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+      serializeDeepObject(`${prefix}[${key}]`, value, out);
+    }
+  } else {
+    out[prefix] = String(obj);
+  }
+}
+
+async function tanaGet(path: string, query?: Record<string, string>): Promise<unknown> {
+  const url = new URL(path, TANA_LOCAL_API);
+  if (query) {
+    for (const [k, v] of Object.entries(query)) {
+      url.searchParams.set(k, v);
+    }
+  }
+  const resp = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${getBearerToken()}` },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => '');
+    throw new Error(`Tana local API ${path} failed (${resp.status}): ${body.slice(0, 200)}`);
+  }
+  return resp.json();
+}
+
+async function tanaPost(path: string, body: unknown): Promise<unknown> {
+  const resp = await fetch(`${TANA_LOCAL_API}${path}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${getBearerToken()}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    throw new Error(`Tana local API POST ${path} failed (${resp.status}): ${text.slice(0, 200)}`);
+  }
+  return resp.json();
 }
 
 const defaultTanaAccessor: TanaAccessor = {
   async searchTodos(opts) {
-    const result = await mcpCall('search_nodes', {
-      query: {
-        and: [
-          { hasType: opts.tagId },
-          { not: { is: 'done' } },
-        ],
-      },
-      workspaceIds: opts.workspaceId ? [opts.workspaceId] : undefined,
-      limit: opts.limit ?? 20,
-    });
+    const query: Record<string, unknown> = {
+      and: [
+        { hasType: opts.tagId },
+        { not: { is: 'done' } },
+      ],
+    };
+    const params: Record<string, string> = {};
+    serializeDeepObject('query', query, params);
+    if (opts.limit) params.limit = String(opts.limit);
 
-    // search_nodes returns an array of nodes
+    const result = await tanaGet('/nodes/search', params);
     if (!Array.isArray(result)) return [];
     return result as TanaNode[];
   },
 
   async readNode(nodeId, maxDepth = 2) {
-    const result = await mcpCall('read_node', {
-      nodeId,
-      maxDepth,
-    });
+    const query: Record<string, string> = {};
+    if (maxDepth !== undefined) query.maxDepth = String(maxDepth);
 
+    const result = await tanaGet(`/nodes/${encodeURIComponent(nodeId)}`, query);
     if (!result || typeof result !== 'object') {
       return { id: nodeId, name: '', markdown: '', children: [] };
     }
@@ -83,14 +121,11 @@ const defaultTanaAccessor: TanaAccessor = {
   },
 
   async addChildContent(parentNodeId, content) {
-    await mcpCall('import_tana_paste', {
-      parentNodeId,
-      content,
-    });
+    await tanaPost(`/nodes/${encodeURIComponent(parentNodeId)}/import`, { content });
   },
 
   async checkNode(nodeId) {
-    await mcpCall('check_node', { nodeId });
+    await tanaPost(`/nodes/${encodeURIComponent(nodeId)}/done`, { done: true });
   },
 };
 
