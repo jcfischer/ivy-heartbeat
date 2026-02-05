@@ -6,6 +6,7 @@
  */
 
 import { join } from 'node:path';
+import { existsSync, readdirSync } from 'node:fs';
 import type { Blackboard } from '../blackboard.ts';
 import type { BlackboardWorkItem } from 'ivy-blackboard/src/types';
 import { getLauncher, logPathForSession } from './launcher.ts';
@@ -180,7 +181,6 @@ export async function runSpecFlowPhase(
   });
 
   // ─── Ensure specflow is initialized in the worktree ─────────────
-  const { existsSync } = await import('node:fs');
   const specflowDbPath = join(worktreePath, '.specflow', 'features.db');
   const legacyDbPath = join(worktreePath, '.specify', 'specflow.db');
   if (!existsSync(specflowDbPath) && !existsSync(legacyDbPath)) {
@@ -290,13 +290,76 @@ export async function runSpecFlowPhase(
   }
 
   if (result.exitCode !== 0) {
-    bb.appendEvent({
-      actorId: sessionId,
-      targetId: item.item_id,
-      summary: `SpecFlow phase "${phase}" failed (exit ${result.exitCode}) for ${featureId}`,
-      metadata: { phase, exitCode: result.exitCode, stderr: result.stderr.slice(0, 500) },
-    });
-    return false;
+    // ─── Complete phase: detect and generate missing artifacts ─────
+    if (phase === 'complete') {
+      const missingArtifacts = detectMissingArtifacts(result.stdout, result.stderr);
+      if (missingArtifacts.length > 0) {
+        bb.appendEvent({
+          actorId: sessionId,
+          targetId: item.item_id,
+          summary: `SpecFlow complete failed — missing artifacts: ${missingArtifacts.join(', ')}. Generating...`,
+          metadata: { phase, missingArtifacts, exitCode: result.exitCode },
+        });
+
+        const generated = await generateMissingArtifacts(
+          missingArtifacts, featureId, worktreePath, sessionId, bb, item.item_id
+        );
+
+        if (generated) {
+          // Retry specflow complete after generating artifacts
+          bb.appendEvent({
+            actorId: sessionId,
+            targetId: item.item_id,
+            summary: `Retrying specflow complete for ${featureId} after artifact generation`,
+            metadata: { phase, featureId },
+          });
+
+          const retryResult = await spawner(cliArgs, worktreePath, SPECFLOW_TIMEOUT_MS);
+          if (retryResult.exitCode === 0) {
+            bb.appendEvent({
+              actorId: sessionId,
+              targetId: item.item_id,
+              summary: `SpecFlow complete succeeded on retry for ${featureId}`,
+              metadata: { phase, featureId },
+            });
+            // Fall through to the complete phase cleanup below
+          } else {
+            bb.appendEvent({
+              actorId: sessionId,
+              targetId: item.item_id,
+              summary: `SpecFlow complete still failed after artifact generation (exit ${retryResult.exitCode})`,
+              metadata: { phase, exitCode: retryResult.exitCode, stderr: retryResult.stderr.slice(0, 500) },
+            });
+            return false;
+          }
+        } else {
+          bb.appendEvent({
+            actorId: sessionId,
+            targetId: item.item_id,
+            summary: `Failed to generate missing artifacts for ${featureId} — aborting complete`,
+            metadata: { phase, missingArtifacts },
+          });
+          return false;
+        }
+      } else {
+        // Complete failed for a non-artifact reason
+        bb.appendEvent({
+          actorId: sessionId,
+          targetId: item.item_id,
+          summary: `SpecFlow phase "${phase}" failed (exit ${result.exitCode}) for ${featureId}`,
+          metadata: { phase, exitCode: result.exitCode, stderr: result.stderr.slice(0, 500) },
+        });
+        return false;
+      }
+    } else {
+      bb.appendEvent({
+        actorId: sessionId,
+        targetId: item.item_id,
+        summary: `SpecFlow phase "${phase}" failed (exit ${result.exitCode}) for ${featureId}`,
+        metadata: { phase, exitCode: result.exitCode, stderr: result.stderr.slice(0, 500) },
+      });
+      return false;
+    }
   }
 
   bb.appendEvent({
@@ -501,7 +564,6 @@ async function checkQualityGate(
  */
 function findFeatureDir(specDir: string, featureId: string): string | null {
   try {
-    const { readdirSync } = require('node:fs');
     const entries = readdirSync(specDir, { withFileTypes: true });
     const prefix = featureId.toLowerCase().replace('-', '-');
     for (const entry of entries) {
@@ -513,6 +575,144 @@ function findFeatureDir(specDir: string, featureId: string): string | null {
     // specDir doesn't exist
   }
   return null;
+}
+
+// ─── Missing artifact detection & generation ────────────────────────────
+
+/**
+ * Check whether specflow complete failed due to missing docs.md or verify.md.
+ * Returns the list of missing artifact names.
+ */
+export function detectMissingArtifacts(stdout: string, stderr: string): string[] {
+  const combined = `${stdout}\n${stderr}`;
+  const missing: string[] = [];
+  if (/docs\.md/i.test(combined) && /missing|not found|required|does not exist/i.test(combined)) {
+    missing.push('docs.md');
+  }
+  if (/verify\.md/i.test(combined) && /missing|not found|required|does not exist/i.test(combined)) {
+    missing.push('verify.md');
+  }
+  // Also detect if both are mentioned generically
+  if (missing.length === 0 && /missing.*artifacts?/i.test(combined)) {
+    missing.push('docs.md', 'verify.md');
+  }
+  return missing;
+}
+
+/**
+ * Build a prompt for Claude to generate docs.md.
+ */
+function buildDocsPrompt(featureId: string, specDir: string): string {
+  return [
+    `You are generating documentation for SpecFlow feature ${featureId}.`,
+    ``,
+    `Create a file at ${specDir}/docs.md that documents what changed in this feature.`,
+    ``,
+    `Steps:`,
+    `1. Run \`git diff main --stat\` to see what files changed`,
+    `2. Run \`git diff main\` to review the actual changes`,
+    `3. Read any spec.md and plan.md in the spec directory for context`,
+    `4. Write ${specDir}/docs.md with:`,
+    `   - A summary of what the feature does`,
+    `   - What files were added or modified`,
+    `   - Any configuration or setup changes needed`,
+    `   - Usage examples if applicable`,
+    ``,
+    `Keep the documentation concise and focused on what a developer needs to know.`,
+    `Write the file using the Write tool. Do not ask for confirmation.`,
+  ].join('\n');
+}
+
+/**
+ * Build a prompt for Claude to generate verify.md.
+ */
+function buildVerifyPrompt(featureId: string, specDir: string): string {
+  return [
+    `You are verifying SpecFlow feature ${featureId}.`,
+    ``,
+    `Create a file at ${specDir}/verify.md that documents verification results.`,
+    ``,
+    `Steps:`,
+    `1. Read any spec.md and plan.md in the spec directory to understand acceptance criteria`,
+    `2. Run \`bun test\` to execute the test suite`,
+    `3. Check if the feature-specific tests pass`,
+    `4. Write ${specDir}/verify.md with:`,
+    `   - Test results summary (pass/fail counts)`,
+    `   - Which acceptance criteria are met`,
+    `   - Any manual verification you performed`,
+    `   - A final verdict: PASS or FAIL with reasoning`,
+    ``,
+    `Write the file using the Write tool. Do not ask for confirmation.`,
+  ].join('\n');
+}
+
+/**
+ * Generate missing docs.md and/or verify.md by launching Claude sessions.
+ * Returns true if all missing artifacts were generated.
+ */
+async function generateMissingArtifacts(
+  missingArtifacts: string[],
+  featureId: string,
+  worktreePath: string,
+  sessionId: string,
+  bb: Blackboard,
+  itemId: string
+): Promise<boolean> {
+  const specDir = join(worktreePath, '.specify', 'specs');
+  const featureDir = findFeatureDir(specDir, featureId) ?? join(specDir, featureId);
+
+  const launcher = getLauncher();
+
+  for (const artifact of missingArtifacts) {
+    const prompt = artifact === 'docs.md'
+      ? buildDocsPrompt(featureId, featureDir)
+      : buildVerifyPrompt(featureId, featureDir);
+
+    bb.appendEvent({
+      actorId: sessionId,
+      targetId: itemId,
+      summary: `Launching Claude to generate ${artifact} for ${featureId}`,
+      metadata: { artifact, featureId },
+    });
+
+    const result = await launcher({
+      sessionId: `${sessionId}-${artifact.replace('.md', '')}`,
+      prompt,
+      workDir: worktreePath,
+      timeoutMs: SPECFLOW_TIMEOUT_MS,
+    });
+
+    if (result.exitCode !== 0) {
+      bb.appendEvent({
+        actorId: sessionId,
+        targetId: itemId,
+        summary: `Failed to generate ${artifact} for ${featureId} (exit ${result.exitCode})`,
+        metadata: { artifact, exitCode: result.exitCode },
+      });
+      return false;
+    }
+
+    // Verify the file was actually created
+    const artifactPath = join(featureDir, artifact);
+    if (!existsSync(artifactPath)) {
+      bb.appendEvent({
+        actorId: sessionId,
+        targetId: itemId,
+        summary: `Claude session completed but ${artifact} was not created at ${artifactPath}`,
+        metadata: { artifact, artifactPath },
+      });
+      return false;
+    }
+
+    bb.appendEvent({
+      actorId: sessionId,
+      targetId: itemId,
+      summary: `Generated ${artifact} for ${featureId}`,
+      metadata: { artifact, featureId },
+    });
+  }
+
+  return true;
 }
 
 // ─── Chain next phase ──────────────────────────────────────────────────
