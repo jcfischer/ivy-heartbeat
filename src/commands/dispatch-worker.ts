@@ -14,6 +14,8 @@ import {
   getDiffSummary,
   buildCommentPrompt,
 } from '../scheduler/worktree.ts';
+import { parseSpecFlowMeta } from '../scheduler/specflow-types.ts';
+import { runSpecFlowPhase } from '../scheduler/specflow-runner.ts';
 
 /**
  * Parse work item metadata to extract GitHub-specific fields.
@@ -131,6 +133,36 @@ export function registerDispatchWorkerCommand(
         try { bb.releaseWorkItem(itemId, sessionId); } catch { /* best effort */ }
         try { bb.deregisterAgent(sessionId); } catch { /* best effort */ }
         process.exit(1);
+      }
+
+      // Determine if this is a SpecFlow work item
+      const sfMeta = parseSpecFlowMeta(item.metadata);
+      if (sfMeta) {
+        try {
+          await runSpecFlowPhase(bb, item, {
+            project_id: item.project_id!,
+            local_path: project.local_path,
+          }, sessionId);
+
+          bb.completeWorkItem(itemId, sessionId);
+          bb.appendEvent({
+            actorId: sessionId,
+            targetId: itemId,
+            summary: `SpecFlow phase "${sfMeta.specflow_phase}" completed for ${sfMeta.specflow_feature_id}`,
+          });
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          try { bb.releaseWorkItem(itemId, sessionId); } catch { /* best effort */ }
+          bb.appendEvent({
+            actorId: sessionId,
+            targetId: itemId,
+            summary: `SpecFlow phase "${sfMeta.specflow_phase}" error: ${msg}`,
+            metadata: { error: msg },
+          });
+        } finally {
+          try { bb.deregisterAgent(sessionId); } catch { /* best effort */ }
+        }
+        return;
       }
 
       // Determine if this is a GitHub work item

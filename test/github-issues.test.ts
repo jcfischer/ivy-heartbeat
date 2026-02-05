@@ -80,6 +80,18 @@ describe('parseGithubIssuesConfig', () => {
     const config = parseGithubIssuesConfig(makeItem());
     expect(config.ownerLogins).toEqual([]);
   });
+
+  test('defaults feature_request_labels to ["feature-request"]', () => {
+    const config = parseGithubIssuesConfig(makeItem());
+    expect(config.featureRequestLabels).toEqual(['feature-request']);
+  });
+
+  test('parses custom feature_request_labels', () => {
+    const config = parseGithubIssuesConfig(
+      makeItem({ config: { feature_request_labels: ['enhancement', 'feature'] } })
+    );
+    expect(config.featureRequestLabels).toEqual(['enhancement', 'feature']);
+  });
 });
 
 describe('extractOwnerRepo', () => {
@@ -480,6 +492,260 @@ describe('evaluateGithubIssues', () => {
     const result = await evaluateGithubIssues(makeItem());
     expect(result.status).toBe('alert');
     expect(result.details?.newIssues).toBe(1);
+  });
+
+  // ─── SpecFlow routing tests ──────────────────────────────────────────
+
+  describe('specflow routing', () => {
+    beforeEach(() => {
+      // Register a specflow-enabled project alongside the default test-project
+      registerProject(bb.db, {
+        id: 'sf-project',
+        name: 'SpecFlow Project',
+        path: '/tmp/sf-project',
+        repo: 'https://github.com/owner/sf-project',
+      });
+      bb.db
+        .prepare('UPDATE projects SET metadata = ? WHERE project_id = ?')
+        .run(JSON.stringify({ specflow_enabled: true }), 'sf-project');
+    });
+
+    test('feature-request issue on specflow-enabled project creates specflow work item', async () => {
+      const issues = [
+        makeIssue({
+          number: 42,
+          title: 'Add dark mode support',
+          url: 'https://github.com/owner/sf-project/issues/42',
+          labels: [{ name: 'feature-request' }],
+          body: 'Please add dark mode.',
+        }),
+      ];
+      setIssueFetcher(async (repo) => repo === 'owner/sf-project' ? issues : []);
+
+      const result = await evaluateGithubIssues(makeItem());
+      expect(result.status).toBe('alert');
+      expect(result.details?.newIssues).toBe(1);
+
+      const workItems = bb.listWorkItems({ all: true, project: 'sf-project' });
+      expect(workItems.length).toBe(1);
+      expect(workItems[0].source).toBe('specflow');
+      expect(workItems[0].source_ref).toBe('https://github.com/owner/sf-project/issues/42');
+
+      const meta = JSON.parse(workItems[0].metadata!);
+      expect(meta.specflow_feature_id).toBe('GH-42');
+      expect(meta.specflow_phase).toBe('specify');
+      expect(meta.specflow_project_id).toBe('sf-project');
+      expect(meta.github_issue_number).toBe(42);
+      expect(meta.github_issue_url).toBe('https://github.com/owner/sf-project/issues/42');
+      expect(meta.github_repo).toBe('owner/sf-project');
+    });
+
+    test('specflow work item title uses SpecFlow convention', async () => {
+      const issues = [
+        makeIssue({
+          number: 99,
+          title: 'New API endpoint',
+          url: 'https://github.com/owner/sf-project/issues/99',
+          labels: [{ name: 'feature-request' }],
+        }),
+      ];
+      setIssueFetcher(async (repo) => repo === 'owner/sf-project' ? issues : []);
+
+      await evaluateGithubIssues(makeItem());
+
+      const workItems = bb.listWorkItems({ all: true, project: 'sf-project' });
+      expect(workItems[0].title).toBe('SpecFlow specify: GH-99');
+    });
+
+    test('regular issue on specflow-enabled project creates github work item', async () => {
+      const issues = [
+        makeIssue({
+          number: 10,
+          title: 'Bug in login',
+          url: 'https://github.com/owner/sf-project/issues/10',
+          labels: [{ name: 'bug' }],
+        }),
+      ];
+      setIssueFetcher(async (repo) => repo === 'owner/sf-project' ? issues : []);
+
+      await evaluateGithubIssues(makeItem());
+
+      const workItems = bb.listWorkItems({ all: true, project: 'sf-project' });
+      expect(workItems.length).toBe(1);
+      expect(workItems[0].source).toBe('github');
+      expect(workItems[0].title).toContain('Issue #10');
+    });
+
+    test('feature-request issue on non-specflow project creates github work item', async () => {
+      // test-project has no specflow_enabled metadata
+      const issues = [
+        makeIssue({
+          number: 15,
+          title: 'Feature idea',
+          url: 'https://github.com/owner/test-project/issues/15',
+          labels: [{ name: 'feature-request' }],
+        }),
+      ];
+      setIssueFetcher(async (repo) => repo === 'owner/test-project' ? issues : []);
+
+      await evaluateGithubIssues(makeItem());
+
+      const workItems = bb.listWorkItems({ all: true, project: 'test-project' });
+      expect(workItems.length).toBe(1);
+      expect(workItems[0].source).toBe('github');
+    });
+
+    test('custom feature_request_labels are respected', async () => {
+      const issues = [
+        makeIssue({
+          number: 50,
+          title: 'Enhancement',
+          url: 'https://github.com/owner/sf-project/issues/50',
+          labels: [{ name: 'enhancement' }],
+        }),
+      ];
+      setIssueFetcher(async (repo) => repo === 'owner/sf-project' ? issues : []);
+
+      await evaluateGithubIssues(
+        makeItem({ config: { feature_request_labels: ['enhancement', 'feature'] } })
+      );
+
+      const workItems = bb.listWorkItems({ all: true, project: 'sf-project' });
+      expect(workItems.length).toBe(1);
+      expect(workItems[0].source).toBe('specflow');
+    });
+
+    test('specflow work item includes issue body in description', async () => {
+      const issues = [
+        makeIssue({
+          number: 60,
+          title: 'Add caching',
+          url: 'https://github.com/owner/sf-project/issues/60',
+          labels: [{ name: 'feature-request' }],
+          body: 'Implement Redis caching for API responses.',
+        }),
+      ];
+      setIssueFetcher(async (repo) => repo === 'owner/sf-project' ? issues : []);
+
+      await evaluateGithubIssues(makeItem());
+
+      const workItems = bb.listWorkItems({ all: true, project: 'sf-project' });
+      const desc = workItems[0].description!;
+      expect(desc).toContain('## Issue Details');
+      expect(desc).toContain('Redis caching');
+      expect(desc).toContain('Repository: owner/sf-project');
+    });
+
+    test('specflow work item is always P2 regardless of owner', async () => {
+      const issues = [
+        makeIssue({
+          number: 70,
+          title: 'Owner feature',
+          url: 'https://github.com/owner/sf-project/issues/70',
+          labels: [{ name: 'feature-request' }],
+          author: { login: 'jcfischer' },
+        }),
+      ];
+      setIssueFetcher(async (repo) => repo === 'owner/sf-project' ? issues : []);
+
+      await evaluateGithubIssues(makeItem({ config: { owner_logins: ['jcfischer'] } }));
+
+      const workItems = bb.listWorkItems({ all: true, project: 'sf-project' });
+      expect(workItems[0].priority).toBe('P2');
+    });
+  });
+
+  describe('specflow deduplication', () => {
+    beforeEach(() => {
+      registerProject(bb.db, {
+        id: 'sf-project',
+        name: 'SpecFlow Project',
+        path: '/tmp/sf-project',
+        repo: 'https://github.com/owner/sf-project',
+      });
+      bb.db
+        .prepare('UPDATE projects SET metadata = ? WHERE project_id = ?')
+        .run(JSON.stringify({ specflow_enabled: true }), 'sf-project');
+    });
+
+    test('skips issue already tracked by specflow source_ref', async () => {
+      // Pre-existing specflow work item with source_ref = issue URL
+      bb.createWorkItem({
+        id: 'specflow-GH-42-specify',
+        title: 'SpecFlow specify: GH-42',
+        project: 'sf-project',
+        source: 'specflow',
+        sourceRef: 'https://github.com/owner/sf-project/issues/42',
+      });
+
+      const issues = [
+        makeIssue({
+          number: 42,
+          title: 'Already tracked',
+          url: 'https://github.com/owner/sf-project/issues/42',
+          labels: [{ name: 'feature-request' }],
+        }),
+      ];
+      setIssueFetcher(async (repo) => repo === 'owner/sf-project' ? issues : []);
+
+      const result = await evaluateGithubIssues(makeItem());
+      expect(result.details?.newIssues).toBe(0);
+
+      // No new work items created
+      const workItems = bb.listWorkItems({ all: true, project: 'sf-project' });
+      expect(workItems.length).toBe(1); // only the pre-existing one
+    });
+
+    test('skips issue tracked by specflow metadata github_issue_url', async () => {
+      // Pre-existing specflow work item with github_issue_url in metadata
+      // (e.g., from a manually queued specflow feature that was linked to an issue)
+      bb.createWorkItem({
+        id: 'specflow-F-100-specify',
+        title: 'SpecFlow specify: F-100',
+        project: 'sf-project',
+        source: 'specflow',
+        sourceRef: 'F-100',
+        metadata: JSON.stringify({
+          specflow_feature_id: 'F-100',
+          specflow_phase: 'specify',
+          specflow_project_id: 'sf-project',
+          github_issue_url: 'https://github.com/owner/sf-project/issues/55',
+        }),
+      });
+
+      const issues = [
+        makeIssue({
+          number: 55,
+          title: 'Already handled via metadata',
+          url: 'https://github.com/owner/sf-project/issues/55',
+          labels: [{ name: 'feature-request' }],
+        }),
+      ];
+      setIssueFetcher(async (repo) => repo === 'owner/sf-project' ? issues : []);
+
+      const result = await evaluateGithubIssues(makeItem());
+      expect(result.details?.newIssues).toBe(0);
+    });
+
+    test('second evaluator run skips already-created specflow items', async () => {
+      const issues = [
+        makeIssue({
+          number: 80,
+          title: 'New feature',
+          url: 'https://github.com/owner/sf-project/issues/80',
+          labels: [{ name: 'feature-request' }],
+        }),
+      ];
+      setIssueFetcher(async (repo) => repo === 'owner/sf-project' ? issues : []);
+
+      // First run — creates specflow item
+      const result1 = await evaluateGithubIssues(makeItem());
+      expect(result1.details?.newIssues).toBe(1);
+
+      // Second run — should skip the same issue
+      const result2 = await evaluateGithubIssues(makeItem());
+      expect(result2.details?.newIssues).toBe(0);
+    });
   });
 
   test('skips projects without GitHub remote_repo', async () => {

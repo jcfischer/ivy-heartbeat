@@ -4,6 +4,7 @@ import { evaluateEmail } from '../evaluators/email.ts';
 import { evaluateCalendar } from '../evaluators/calendar.ts';
 import { evaluateGithubIssues } from '../evaluators/github-issues.ts';
 import { evaluateAgentDispatch } from '../evaluators/agent-dispatch.ts';
+import { evaluateSpecFlowCleanup } from '../evaluators/specflow-cleanup.ts';
 
 export type Evaluator = (item: ChecklistItem) => Promise<CheckResult>;
 
@@ -18,6 +19,8 @@ const evaluators: Record<CheckType, Evaluator> = {
   github_issues: evaluateGithubIssues,
 
   agent_dispatch: evaluateAgentDispatch,
+
+  specflow_cleanup: evaluateSpecFlowCleanup,
 
   custom: async (item) => ({
     item,

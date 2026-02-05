@@ -25,6 +25,8 @@ interface GithubIssuesConfig {
   limit: number;
   /** GitHub logins treated as owner — issues from these authors run autonomously */
   ownerLogins: string[];
+  /** Labels that trigger SpecFlow pipeline on specflow-enabled projects */
+  featureRequestLabels: string[];
 }
 
 /**
@@ -35,7 +37,32 @@ export function parseGithubIssuesConfig(item: ChecklistItem): GithubIssuesConfig
     labels: Array.isArray(item.config.labels) ? item.config.labels as string[] : [],
     limit: typeof item.config.limit === 'number' ? item.config.limit : 30,
     ownerLogins: Array.isArray(item.config.owner_logins) ? item.config.owner_logins as string[] : [],
+    featureRequestLabels: Array.isArray(item.config.feature_request_labels)
+      ? item.config.feature_request_labels as string[]
+      : ['feature-request'],
   };
+}
+
+/**
+ * Check if a project has specflow_enabled in its metadata.
+ */
+function isSpecFlowEnabled(project: ProjectWithCounts): boolean {
+  if (!project.metadata) return false;
+  try {
+    const meta = JSON.parse(project.metadata);
+    return !!meta.specflow_enabled;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check if an issue has any of the feature-request labels.
+ */
+function isFeatureRequest(issue: GithubIssue, featureRequestLabels: string[]): boolean {
+  if (featureRequestLabels.length === 0) return false;
+  const issueLabels = issue.labels.map((l) => l.name.toLowerCase());
+  return featureRequestLabels.some((frl) => issueLabels.includes(frl.toLowerCase()));
 }
 
 /**
@@ -162,7 +189,11 @@ export function resetContentFilter(): void {
 
 export type BlackboardAccessor = {
   listProjects(): ProjectWithCounts[];
-  listWorkItems(opts?: { all?: boolean; project?: string }): Array<{ source_ref: string | null }>;
+  listWorkItems(opts?: { all?: boolean; project?: string }): Array<{
+    source_ref: string | null;
+    metadata?: string | null;
+    status?: string;
+  }>;
   createWorkItem(opts: {
     id: string;
     title: string;
@@ -240,16 +271,24 @@ export async function evaluateGithubIssues(item: ChecklistItem): Promise<CheckRe
           .map((w) => w.source_ref)
           .filter((ref): ref is string => ref !== null)
       );
+      // Also check metadata for specflow items tracking GitHub issues
+      const trackedIssueUrls = new Set(
+        existingItems
+          .filter((w) => w.metadata)
+          .map((w) => {
+            try {
+              const m = JSON.parse(w.metadata!);
+              return m.github_issue_url as string | undefined;
+            } catch { return undefined; }
+          })
+          .filter((url): url is string => !!url)
+      );
 
       for (const issue of issues) {
-        if (trackedUrls.has(issue.url)) continue;
+        if (trackedUrls.has(issue.url) || trackedIssueUrls.has(issue.url)) continue;
 
         // New issue — filter content before creating work item
-        const itemId = `gh-${project.project_id}-${issue.number}`;
         const labelStr = issue.labels.map((l) => l.name).join(', ');
-        const isOwner = config.ownerLogins.some(
-          (login) => login.toLowerCase() === issue.author.login.toLowerCase()
-        );
 
         // Run issue body through content filter to detect prompt injection
         let filterResult: ContentFilterResult;
@@ -266,6 +305,84 @@ export async function evaluateGithubIssues(item: ChecklistItem): Promise<CheckRe
         const hasPatternMatches = filterResult.matches.length > 0;
         const contentBlocked = filterResult.decision === 'BLOCKED' && hasPatternMatches;
         const contentWarning = filterResult.decision === 'BLOCKED' && !hasPatternMatches;
+
+        // ─── Route feature requests to SpecFlow on enabled projects ─────
+        const routeToSpecFlow = isFeatureRequest(issue, config.featureRequestLabels)
+          && isSpecFlowEnabled(project);
+
+        if (routeToSpecFlow) {
+          const featureId = `GH-${issue.number}`;
+          const sfItemId = `specflow-${featureId}-specify`;
+
+          const sfDescParts = [
+            `GitHub Issue #${issue.number}: ${issue.title}`,
+            `Repository: ${ownerRepo}`,
+            `Opened by: ${issue.author.login}`,
+            labelStr ? `Labels: ${labelStr}` : '',
+            `URL: ${issue.url}`,
+          ];
+
+          if (contentBlocked) {
+            sfDescParts.push(
+              '',
+              '## ⚠ Content Blocked',
+              'Issue body was blocked by content filter (prompt injection detected).',
+              `Matched patterns: ${filterResult.matches.map((m) => m.pattern_id).join(', ')}`,
+              'Review the issue manually before acting on it.',
+            );
+          } else if (issue.body) {
+            if (contentWarning) {
+              sfDescParts.push(
+                '',
+                '## ⚠ Content Warning',
+                'Content filter flagged encoding anomalies (no injection patterns matched). Body included for review.',
+              );
+            }
+            sfDescParts.push(
+              '',
+              '## Issue Details',
+              issue.body,
+            );
+          }
+
+          try {
+            bbAccessor.createWorkItem({
+              id: sfItemId,
+              title: `SpecFlow specify: ${featureId}`,
+              description: sfDescParts.filter(Boolean).join('\n'),
+              project: project.project_id,
+              source: 'specflow',
+              sourceRef: issue.url,
+              priority: 'P2',
+              metadata: JSON.stringify({
+                specflow_feature_id: featureId,
+                specflow_phase: 'specify',
+                specflow_project_id: project.project_id,
+                github_issue_number: issue.number,
+                github_issue_url: issue.url,
+                github_repo: ownerRepo,
+                content_filtered: true,
+                content_blocked: contentBlocked,
+              }),
+            });
+
+            totalNew++;
+            newIssueDetails.push({
+              project: project.project_id,
+              issue: `#${issue.number}: ${issue.title} (→ SpecFlow)`,
+              url: issue.url,
+            });
+          } catch {
+            // Work item may already exist — skip
+          }
+          continue;
+        }
+
+        // ─── Regular GitHub work item ───────────────────────────────
+        const itemId = `gh-${project.project_id}-${issue.number}`;
+        const isOwner = config.ownerLogins.some(
+          (login) => login.toLowerCase() === issue.author.login.toLowerCase()
+        );
 
         const descriptionParts = [
           `GitHub Issue #${issue.number}: ${issue.title}`,

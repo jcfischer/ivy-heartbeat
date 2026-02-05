@@ -15,6 +15,8 @@ import {
   getDiffSummary,
   buildCommentPrompt,
 } from './worktree.ts';
+import { parseSpecFlowMeta } from './specflow-types.ts';
+import { runSpecFlowPhase } from './specflow-runner.ts';
 import type {
   DispatchOptions,
   DispatchResult,
@@ -331,6 +333,58 @@ export async function dispatch(
       // Synchronous mode: run launcher inline and wait for completion.
       const launcher = getLauncher();
       const startTime = Date.now();
+
+      // SpecFlow detection: delegate to specflow runner
+      const sfMeta = parseSpecFlowMeta(item.metadata);
+      if (sfMeta) {
+        try {
+          await runSpecFlowPhase(bb, item, {
+            project_id: item.project_id!,
+            local_path: project.local_path,
+          }, sessionId);
+
+          bb.completeWorkItem(item.item_id, sessionId);
+
+          const durationMs = Date.now() - startTime;
+          bb.appendEvent({
+            actorId: sessionId,
+            targetId: item.item_id,
+            summary: `SpecFlow phase "${sfMeta.specflow_phase}" completed for ${sfMeta.specflow_feature_id} (${Math.round(durationMs / 1000)}s)`,
+            metadata: { phase: sfMeta.specflow_phase, durationMs },
+          });
+
+          result.dispatched.push({
+            itemId: item.item_id,
+            title: item.title,
+            projectId: item.project_id!,
+            sessionId,
+            exitCode: 0,
+            completed: true,
+            durationMs,
+          });
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          const durationMs = Date.now() - startTime;
+          try { bb.releaseWorkItem(item.item_id, sessionId); } catch { /* best effort */ }
+
+          bb.appendEvent({
+            actorId: sessionId,
+            targetId: item.item_id,
+            summary: `SpecFlow phase "${sfMeta.specflow_phase}" error: ${msg}`,
+            metadata: { error: msg, durationMs },
+          });
+
+          result.errors.push({
+            itemId: item.item_id,
+            title: item.title,
+            error: msg,
+          });
+        } finally {
+          bb.deregisterAgent(sessionId);
+        }
+        continue;
+      }
+
       const prompt = buildPrompt(item, sessionId);
 
       // Worktree setup for GitHub items

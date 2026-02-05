@@ -161,6 +161,52 @@ export async function removeWorktree(
   }
 }
 
+/**
+ * Ensure a worktree exists at the given path and is valid.
+ * If the worktree exists and is registered in git, reuses it.
+ * Otherwise, prunes stale entries and creates a fresh worktree.
+ */
+export async function ensureWorktree(
+  projectPath: string,
+  worktreePath: string,
+  branch: string
+): Promise<string> {
+  // Check if directory exists
+  if (existsSync(worktreePath)) {
+    // Verify it's a registered worktree
+    try {
+      const list = await git(['worktree', 'list', '--porcelain'], projectPath);
+      if (list.includes(worktreePath)) {
+        return worktreePath; // Valid, reuse it
+      }
+    } catch {
+      // git worktree list failed — fall through to recreate
+    }
+
+    // Directory exists but not a valid worktree — clean up
+    try {
+      await git(['worktree', 'remove', '--force', worktreePath], projectPath);
+    } catch {
+      await git(['worktree', 'prune'], projectPath);
+    }
+  }
+
+  // Ensure parent directory exists
+  const { dirname } = await import('node:path');
+  mkdirSync(dirname(worktreePath), { recursive: true });
+
+  // Try to create with existing branch first (may exist from prior phase)
+  try {
+    await git(['worktree', 'add', worktreePath, branch], projectPath);
+    return worktreePath;
+  } catch {
+    // Branch may not exist — create new
+  }
+
+  await git(['worktree', 'add', '-b', branch, worktreePath], projectPath);
+  return worktreePath;
+}
+
 // ─── Post-agent git operations ────────────────────────────────────────────
 
 /**
