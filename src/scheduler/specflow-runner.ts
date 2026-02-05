@@ -135,7 +135,8 @@ export async function runSpecFlowPhase(
     throw new Error('Work item has no valid SpecFlow metadata');
   }
 
-  const { specflow_feature_id: featureId, specflow_phase: phase } = meta;
+  let { specflow_feature_id: featureId } = meta;
+  const { specflow_phase: phase } = meta;
 
   bb.appendEvent({
     actorId: sessionId,
@@ -213,6 +214,51 @@ export async function runSpecFlowPhase(
       summary: `Initialized specflow database in worktree`,
       metadata: { worktreePath },
     });
+  }
+
+  // ─── Register GitHub-routed features that don't exist in specflow DB ──
+  // GitHub issue features (GH-*) are created by the evaluator, not specflow init.
+  // Use `specflow add` to register them, then use the auto-assigned feature ID.
+  const originalFeatureId = featureId;
+  if (featureId.startsWith('GH-') && phase === 'specify') {
+    const featureName = item.title.replace(/^SpecFlow \w+: /, '');
+    const featureDesc = item.description ?? featureName;
+    const addResult = await spawner(
+      ['add', featureName, featureDesc, '--priority', '1'],
+      worktreePath,
+      30_000
+    );
+    if (addResult.exitCode === 0) {
+      // Parse "Added feature F-019: ..." to get the real specflow ID
+      const match = addResult.stdout.match(/Added feature (F-\d+)/);
+      if (match) {
+        featureId = match[1];
+        meta.specflow_feature_id = featureId;
+      }
+      bb.appendEvent({
+        actorId: sessionId,
+        targetId: item.item_id,
+        summary: `Registered feature ${originalFeatureId} as ${featureId} in specflow`,
+        metadata: { githubFeatureId: originalFeatureId, specflowFeatureId: featureId },
+      });
+
+      // Enrich with defaults so batch specify can run
+      await spawner([
+        'enrich', featureId,
+        '--problem-type', 'manual_workaround',
+        '--urgency', 'user_demand',
+        '--primary-user', 'developers',
+        '--integration-scope', 'extends_existing',
+      ], worktreePath, 30_000);
+    } else {
+      bb.appendEvent({
+        actorId: sessionId,
+        targetId: item.item_id,
+        summary: `Failed to register feature ${featureId} in specflow (exit ${addResult.exitCode})`,
+        metadata: { stderr: addResult.stderr.slice(0, 500) },
+      });
+      return false;
+    }
   }
 
   // ─── Build CLI arguments ─────────────────────────────────────────
