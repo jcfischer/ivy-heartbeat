@@ -8,6 +8,7 @@
 import { join } from 'node:path';
 import type { Blackboard } from '../blackboard.ts';
 import type { BlackboardWorkItem } from 'ivy-blackboard/src/types';
+import { getLauncher, logPathForSession } from './launcher.ts';
 import {
   type SpecFlowPhase,
   type SpecFlowWorkItemMetadata,
@@ -304,6 +305,41 @@ export async function runSpecFlowPhase(
     summary: `SpecFlow phase "${phase}" completed (exit 0) for ${featureId}`,
     metadata: { phase, featureId },
   });
+
+  // ─── Implement: specflow outputs a prompt — launch Claude to execute it ──
+  if (phase === 'implement' && result.stdout.trim()) {
+    bb.appendEvent({
+      actorId: sessionId,
+      targetId: item.item_id,
+      summary: `Launching Claude to implement ${featureId}`,
+      metadata: { promptLength: result.stdout.length },
+    });
+
+    const launcher = getLauncher();
+    const launchResult = await launcher({
+      sessionId,
+      prompt: result.stdout.trim(),
+      workDir: worktreePath,
+      timeoutMs: SPECFLOW_TIMEOUT_MS,
+    });
+
+    if (launchResult.exitCode !== 0) {
+      bb.appendEvent({
+        actorId: sessionId,
+        targetId: item.item_id,
+        summary: `Implementation agent failed (exit ${launchResult.exitCode}) for ${featureId}`,
+        metadata: { exitCode: launchResult.exitCode },
+      });
+      return false;
+    }
+
+    bb.appendEvent({
+      actorId: sessionId,
+      targetId: item.item_id,
+      summary: `Implementation agent completed for ${featureId}`,
+      metadata: { featureId },
+    });
+  }
 
   // ─── Quality gate check ──────────────────────────────────────────
   const rubric = PHASE_RUBRICS[phase];
