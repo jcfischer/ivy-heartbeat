@@ -108,6 +108,12 @@ export function registerDispatchWorkerCommand(
       const bb = ctx.bb;
       const launcher = getLauncher();
 
+      // Fix PID: the scheduler registered this agent with its own PID, but the
+      // scheduler exits after spawning us. Update to our PID so sweepStaleAgents
+      // checks the correct (alive) process.
+      bb.db.query('UPDATE agents SET pid = ?, last_seen_at = ? WHERE session_id = ?')
+        .run(process.pid, new Date().toISOString(), sessionId);
+
       // Read work item from blackboard
       const items = bb.listWorkItems({ status: 'claimed' });
       const item = items.find((i) => i.item_id === itemId);
@@ -231,6 +237,21 @@ export function registerDispatchWorkerCommand(
         summary: `Worker started for "${item.title}" in ${workDir}`,
         metadata: { itemId, projectId: item.project_id, pid: process.pid, workDir },
       });
+
+      // Send periodic heartbeats to prevent stale sweep during long-running agents.
+      // sweepStaleAgents checks last_seen_at; heartbeats refresh it every 60s.
+      const heartbeatInterval = setInterval(() => {
+        try {
+          const elapsed = Math.round((Date.now() - startTime) / 1000);
+          bb.sendHeartbeat({
+            sessionId,
+            progress: `Working on "${item.title}" (${elapsed}s)`,
+            workItemId: itemId,
+          });
+        } catch {
+          // Non-fatal: best effort heartbeat
+        }
+      }, 60_000);
 
       try {
         const result = await launcher({
@@ -421,6 +442,7 @@ export function registerDispatchWorkerCommand(
           metadata: { itemId, error: msg, durationMs },
         });
       } finally {
+        clearInterval(heartbeatInterval);
         // Always clean up worktree
         if (worktreePath) {
           try {
