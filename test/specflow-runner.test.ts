@@ -114,7 +114,7 @@ describe('specflow-runner', () => {
       // Mock: specify succeeds, eval passes
       setSpecFlowSpawner(mockSpawner({
         specify: { exitCode: 0, stdout: '', stderr: '' },
-        eval: { exitCode: 0, stdout: JSON.stringify({ score: 95, feedback: 'Good' }), stderr: '' },
+        eval: { exitCode: 0, stdout: JSON.stringify({ results: [{ passed: true, score: 0.95, output: 'Good' }], passed: 1, failed: 0 }), stderr: '' },
       }));
 
       // Register agent so runSpecFlowPhase can log events
@@ -158,7 +158,7 @@ describe('specflow-runner', () => {
 
       setSpecFlowSpawner(mockSpawner({
         plan: { exitCode: 0, stdout: '', stderr: '' },
-        eval: { exitCode: 0, stdout: JSON.stringify({ score: 90, feedback: 'OK' }), stderr: '' },
+        eval: { exitCode: 0, stdout: JSON.stringify({ results: [{ passed: true, score: 0.90, output: 'OK' }], passed: 1, failed: 0 }), stderr: '' },
       }));
 
       ctx.bb.registerAgent({ name: 'test', project: 'test-proj', work: item.item_id });
@@ -231,7 +231,7 @@ describe('specflow-runner', () => {
 
       setSpecFlowSpawner(mockSpawner({
         specify: { exitCode: 0, stdout: '', stderr: '' },
-        eval: { exitCode: 0, stdout: JSON.stringify({ score: 80 }), stderr: '' },
+        eval: { exitCode: 0, stdout: JSON.stringify({ results: [{ passed: true, score: 0.80, output: 'Good' }], passed: 1, failed: 0 }), stderr: '' },
       }));
 
       ctx.bb.registerAgent({ name: 'test', project: 'test-proj', work: item.item_id });
@@ -260,7 +260,7 @@ describe('specflow-runner', () => {
         specify: { exitCode: 0, stdout: '', stderr: '' },
         eval: {
           exitCode: 0,
-          stdout: JSON.stringify({ score: 65, feedback: 'Missing edge cases' }),
+          stdout: JSON.stringify({ results: [{ passed: false, score: 0.65, output: 'Missing edge cases' }], passed: 0, failed: 1 }),
           stderr: '',
         },
       }));
@@ -300,7 +300,7 @@ describe('specflow-runner', () => {
         specify: { exitCode: 0, stdout: '', stderr: '' },
         eval: {
           exitCode: 0,
-          stdout: JSON.stringify({ score: 50, feedback: 'Still bad' }),
+          stdout: JSON.stringify({ results: [{ passed: false, score: 0.50, output: 'Still bad' }], passed: 0, failed: 1 }),
           stderr: '',
         },
       }));

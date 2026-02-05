@@ -438,16 +438,20 @@ async function checkQualityGate(
   );
 
   if (result.exitCode !== 0) {
-    return { passed: false, score: 0, feedback: `Eval failed: ${result.stderr}` };
+    return { passed: false, score: 0, feedback: `Eval failed (exit ${result.exitCode}): ${result.stderr || result.stdout}` };
   }
 
   try {
     const evalOutput = JSON.parse(result.stdout);
-    const score = evalOutput.score ?? evalOutput.percentage ?? 0;
-    const feedback = evalOutput.feedback ?? evalOutput.details ?? result.stdout;
+    // specflow eval --json returns { results: [{ passed, score, output }], ... }
+    const testResult = evalOutput.results?.[0];
+    const score = testResult?.score ?? evalOutput.score ?? evalOutput.percentage ?? 0;
+    // Normalize: specflow returns 0.0-1.0, quality gate expects 0-100
+    const scorePercent = score <= 1 ? Math.round(score * 100) : score;
+    const feedback = testResult?.output ?? evalOutput.feedback ?? evalOutput.details ?? result.stdout;
     return {
-      passed: score >= QUALITY_THRESHOLD,
-      score,
+      passed: scorePercent >= QUALITY_THRESHOLD,
+      score: scorePercent,
       feedback: typeof feedback === 'string' ? feedback : JSON.stringify(feedback),
     };
   } catch {
