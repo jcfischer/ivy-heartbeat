@@ -213,6 +213,10 @@ The checklist lives at `~/.pai/IVY_HEARTBEAT.md` by default. Override with the `
 Environment variables:
 - `IMAP_HOST`, `IMAP_USER`, `IMAP_PASS`, `IMAP_PORT` — for the email evaluator
 - `CONTENT_FILTER_PATH` — path to an optional content filter CLI (for GitHub issue body filtering)
+- `ICAL_CLI_PATH` — path to calendar CLI (default: `~/.claude/skills/Calendar/ical`)
+- `SPECFLOW_BIN` — path to specflow binary (default: `~/bin/specflow`)
+- `IVY_WORKTREE_DIR` — base directory for git worktrees (default: `~/.pai/worktrees`)
+- `IVY_LOG_DIR` — directory for dispatch agent logs (default: `~/.pai/blackboard/logs`)
 
 ## Contributing
 

@@ -40,8 +40,7 @@ function defaultScanner(): Array<{
   projectPath: string;
   featureId: string;
 }> {
-  const home = process.env.HOME ?? '/tmp';
-  const baseDir = join(home, '.pai', 'worktrees');
+  const baseDir = process.env.IVY_WORKTREE_DIR ?? join(process.env.HOME ?? '/tmp', '.pai', 'worktrees');
   const results: Array<{ path: string; projectPath: string; featureId: string }> = [];
 
   if (!existsSync(baseDir)) return results;

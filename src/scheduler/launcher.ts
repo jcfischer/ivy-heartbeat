@@ -5,6 +5,7 @@ import type { LaunchOptions, LaunchResult, SessionLauncher } from './types.ts';
  * Resolve the log directory for dispatch agent logs.
  */
 export function resolveLogDir(): string {
+  if (process.env.IVY_LOG_DIR) return process.env.IVY_LOG_DIR;
   const home = process.env.HOME ?? '/tmp';
   return `${home}/.pai/blackboard/logs`;
 }

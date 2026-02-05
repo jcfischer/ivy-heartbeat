@@ -66,6 +66,7 @@ async function gh(args: string[], cwd: string): Promise<string> {
 // ─── Worktree base directory ──────────────────────────────────────────────
 
 function worktreeBaseDir(): string {
+  if (process.env.IVY_WORKTREE_DIR) return process.env.IVY_WORKTREE_DIR;
   const home = process.env.HOME ?? '/tmp';
   return join(home, '.pai', 'worktrees');
 }
