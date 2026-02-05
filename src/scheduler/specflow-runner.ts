@@ -181,7 +181,13 @@ export async function runSpecFlowPhase(
   const { existsSync } = await import('node:fs');
   const specflowDbPath = join(worktreePath, '.specify', 'specflow.db');
   if (!existsSync(specflowDbPath)) {
-    const initResult = await spawner(['init'], worktreePath, 60_000);
+    // specflow init requires a description or --from-spec/--from-features.
+    // Use app-context.md if available, otherwise use the project ID.
+    const appContextPath = join(worktreePath, '.specify', 'app-context.md');
+    const initArgs = existsSync(appContextPath)
+      ? ['init', '--from-spec', appContextPath]
+      : ['init', project.project_id];
+    const initResult = await spawner(initArgs, worktreePath, 60_000);
     if (initResult.exitCode !== 0) {
       bb.appendEvent({
         actorId: sessionId,
