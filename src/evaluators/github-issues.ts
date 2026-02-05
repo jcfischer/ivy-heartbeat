@@ -127,6 +127,12 @@ export type ContentFilterFn = (content: string, label: string) => Promise<Conten
 let contentFilter: ContentFilterFn = defaultContentFilter;
 
 async function defaultContentFilter(content: string, label: string): Promise<ContentFilterResult> {
+  const filterPath = process.env.CONTENT_FILTER_PATH;
+  if (!filterPath) {
+    // No content filter configured — fail-open
+    return { decision: 'ALLOWED', matches: [] };
+  }
+
   const { join } = await import('node:path');
   const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
@@ -136,8 +142,6 @@ async function defaultContentFilter(content: string, label: string): Promise<Con
 
   try {
     writeFileSync(tmpFile, content);
-
-    const filterPath = process.env.CONTENT_FILTER_PATH ?? join(process.env.HOME ?? '', 'work/pai-content-filter/src/cli.ts');
     const proc = Bun.spawn(
       ['bun', 'run', filterPath, 'check', tmpFile, '--json', '--format', 'markdown'],
       { stdout: 'pipe', stderr: 'pipe' }

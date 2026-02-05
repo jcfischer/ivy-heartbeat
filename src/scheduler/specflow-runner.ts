@@ -45,7 +45,7 @@ async function defaultSpawner(
   cwd: string,
   timeoutMs: number
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  const specflowBin = join(process.env.HOME ?? '', 'bin', 'specflow');
+  const specflowBin = process.env.SPECFLOW_BIN ?? join(process.env.HOME ?? '', 'bin', 'specflow');
   const proc = Bun.spawn([specflowBin, ...args], {
     cwd,
     stdout: 'pipe',
@@ -165,8 +165,8 @@ export async function runSpecFlowPhase(
     );
   } else {
     // Fallback: derive worktree path and ensure it exists
-    const home = process.env.HOME ?? '/tmp';
-    worktreePath = join(home, '.pai', 'worktrees', project.project_id, branch);
+    const wtBase = process.env.IVY_WORKTREE_DIR ?? join(process.env.HOME ?? '/tmp', '.pai', 'worktrees');
+    worktreePath = join(wtBase, project.project_id, branch);
     worktreePath = await worktreeOps.ensureWorktree(project.local_path, worktreePath, branch);
   }
 

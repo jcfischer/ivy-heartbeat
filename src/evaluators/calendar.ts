@@ -75,7 +75,7 @@ export type CalendarFetcher = (config: CalendarConfig) => Promise<CalendarEvent[
 let calendarFetcher: CalendarFetcher = defaultCalendarFetcher;
 
 async function defaultCalendarFetcher(config: CalendarConfig): Promise<CalendarEvent[]> {
-  const icalPath = `${process.env.HOME}/.claude/skills/Calendar/ical`;
+  const icalPath = process.env.ICAL_CLI_PATH ?? `${process.env.HOME}/.claude/skills/Calendar/ical`;
 
   try {
     const args = ['read', '--next', String(Math.ceil(config.lookaheadHours / 24)), '--format', 'json'];
