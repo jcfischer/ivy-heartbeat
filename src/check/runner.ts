@@ -5,6 +5,7 @@ import { getEvaluator } from './evaluators.ts';
 import { computeChecklistHash, shouldSkip } from './guard.ts';
 import { dispatchAlert } from '../alert/dispatcher.ts';
 import { setBlackboardAccessor, resetBlackboardAccessor } from '../evaluators/github-issues.ts';
+import { setTanaBlackboardAccessor, resetTanaBlackboardAccessor } from '../evaluators/tana-todos.ts';
 import { setDispatchBlackboard, resetDispatchBlackboard } from '../evaluators/agent-dispatch.ts';
 import type {
   CheckOptions,
@@ -85,6 +86,7 @@ export async function runChecks(
 
   // Make blackboard available to evaluators that need it
   setBlackboardAccessor(bb);
+  setTanaBlackboardAccessor(bb);
   setDispatchBlackboard(bb);
 
   const results: CheckResult[] = [];
@@ -154,6 +156,7 @@ export async function runChecks(
   }
 
   resetBlackboardAccessor();
+  resetTanaBlackboardAccessor();
   resetDispatchBlackboard();
 
   return {

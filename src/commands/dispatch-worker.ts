@@ -16,6 +16,7 @@ import {
 } from '../scheduler/worktree.ts';
 import { parseSpecFlowMeta } from '../scheduler/specflow-types.ts';
 import { runSpecFlowPhase } from '../scheduler/specflow-runner.ts';
+import { getTanaAccessor } from '../evaluators/tana-accessor.ts';
 
 /**
  * Parse work item metadata to extract GitHub-specific fields.
@@ -44,6 +45,32 @@ function parseGithubMeta(metadata: string | null): {
     // Invalid metadata JSON
   }
   return { isGithub: false };
+}
+
+/**
+ * Parse work item metadata to extract Tana-specific fields.
+ */
+export function parseTanaMeta(metadata: string | null): {
+  isTana: boolean;
+  nodeId?: string;
+  workspaceId?: string;
+  tagId?: string;
+} {
+  if (!metadata) return { isTana: false };
+  try {
+    const parsed = JSON.parse(metadata);
+    if (parsed.tana_node_id) {
+      return {
+        isTana: true,
+        nodeId: parsed.tana_node_id,
+        workspaceId: parsed.tana_workspace_id,
+        tagId: parsed.tana_tag_id,
+      };
+    }
+  } catch {
+    // Invalid metadata JSON
+  }
+  return { isTana: false };
 }
 
 /**
@@ -408,6 +435,31 @@ export function registerDispatchWorkerCommand(
             }
           }
 
+          // Tana write-back on success (non-fatal)
+          const tanaMeta = parseTanaMeta(item.metadata);
+          if (tanaMeta.isTana && tanaMeta.nodeId) {
+            try {
+              const tanaAccessor = getTanaAccessor();
+              const resultContent = `- ✅ Ivy completed this task\n  - **Result:** Completed "${item.title}"\n  - **Completed:** ${new Date().toISOString()}`;
+              await tanaAccessor.addChildContent(tanaMeta.nodeId, resultContent);
+              await tanaAccessor.checkNode(tanaMeta.nodeId);
+              bb.appendEvent({
+                actorId: sessionId,
+                targetId: itemId,
+                summary: `Tana write-back: checked off node ${tanaMeta.nodeId}`,
+                metadata: { tanaNodeId: tanaMeta.nodeId, writeBack: 'success' },
+              });
+            } catch (tanaErr: unknown) {
+              const tanaMsg = tanaErr instanceof Error ? tanaErr.message : String(tanaErr);
+              bb.appendEvent({
+                actorId: sessionId,
+                targetId: itemId,
+                summary: `Tana write-back failed (non-fatal): ${tanaMsg}`,
+                metadata: { tanaNodeId: tanaMeta.nodeId, error: tanaMsg },
+              });
+            }
+          }
+
           bb.completeWorkItem(itemId, sessionId);
           bb.appendEvent({
             actorId: sessionId,
@@ -416,6 +468,31 @@ export function registerDispatchWorkerCommand(
             metadata: { itemId, exitCode: 0, durationMs },
           });
         } else {
+          // Tana write-back on failure (non-fatal)
+          const tanaMeta = parseTanaMeta(item.metadata);
+          if (tanaMeta.isTana && tanaMeta.nodeId) {
+            try {
+              const tanaAccessor = getTanaAccessor();
+              const errorContent = `- ❌ Ivy encountered an error\n  - **Error:** Agent exited with code ${result.exitCode}\n  - **Attempted:** ${new Date().toISOString()}\n  - **Status:** Task left pending for retry or manual action`;
+              await tanaAccessor.addChildContent(tanaMeta.nodeId, errorContent);
+              // Do NOT check off the node — leave it unchecked for retry
+              bb.appendEvent({
+                actorId: sessionId,
+                targetId: itemId,
+                summary: `Tana write-back: added error context to node ${tanaMeta.nodeId}`,
+                metadata: { tanaNodeId: tanaMeta.nodeId, writeBack: 'error_reported' },
+              });
+            } catch (tanaErr: unknown) {
+              const tanaMsg = tanaErr instanceof Error ? tanaErr.message : String(tanaErr);
+              bb.appendEvent({
+                actorId: sessionId,
+                targetId: itemId,
+                summary: `Tana write-back failed (non-fatal): ${tanaMsg}`,
+                metadata: { tanaNodeId: tanaMeta.nodeId, error: tanaMsg },
+              });
+            }
+          }
+
           bb.releaseWorkItem(itemId, sessionId);
           bb.appendEvent({
             actorId: sessionId,
