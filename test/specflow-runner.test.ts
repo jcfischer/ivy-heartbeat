@@ -74,16 +74,16 @@ beforeEach(() => {
   spawnerCalls = [];
   seedProject('test-proj', '/tmp/test-project');
 
-  // Create mock worktree with specflow.db so init is skipped
-  mkdirSync('/tmp/mock-worktree/.specify', { recursive: true });
-  writeFileSync('/tmp/mock-worktree/.specify/specflow.db', '');
+  // Create mock worktree with features.db so init is skipped
+  mkdirSync('/tmp/mock-worktree/.specflow', { recursive: true });
+  writeFileSync('/tmp/mock-worktree/.specflow/features.db', '');
 
   // Mock worktree ops so tests don't call real git
   setWorktreeOps({
     createWorktree: async (_proj, _branch, _id) => '/tmp/mock-worktree',
     ensureWorktree: async (_proj, worktreePath, _branch) => {
-      mkdirSync(`${worktreePath}/.specify`, { recursive: true });
-      writeFileSync(`${worktreePath}/.specify/specflow.db`, '');
+      mkdirSync(`${worktreePath}/.specflow`, { recursive: true });
+      writeFileSync(`${worktreePath}/.specflow/features.db`, '');
       return worktreePath;
     },
     removeWorktree: async () => {},

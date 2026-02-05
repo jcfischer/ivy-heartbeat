@@ -12,6 +12,10 @@ export interface SpecFlowWorkItemMetadata {
   main_branch?: string;
   retry_count?: number;
   eval_feedback?: string;
+  // GitHub issue tracking — carried through chains for evaluator dedup
+  github_issue_url?: string;
+  github_issue_number?: number;
+  github_repo?: string;
 }
 
 /** Phase → next phase (null = pipeline done) */

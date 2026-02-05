@@ -180,8 +180,9 @@ export async function runSpecFlowPhase(
 
   // ─── Ensure specflow is initialized in the worktree ─────────────
   const { existsSync } = await import('node:fs');
-  const specflowDbPath = join(worktreePath, '.specify', 'specflow.db');
-  if (!existsSync(specflowDbPath)) {
+  const specflowDbPath = join(worktreePath, '.specflow', 'features.db');
+  const legacyDbPath = join(worktreePath, '.specify', 'specflow.db');
+  if (!existsSync(specflowDbPath) && !existsSync(legacyDbPath)) {
     // Try init strategies in order of preference:
     // 1. --from-features (imports existing feature definitions)
     // 2. --batch with --from-spec (non-interactive, uses app context)
@@ -216,48 +217,57 @@ export async function runSpecFlowPhase(
     });
   }
 
-  // ─── Register GitHub-routed features that don't exist in specflow DB ──
-  // GitHub issue features (GH-*) are created by the evaluator, not specflow init.
-  // Use `specflow add` to register them, then use the auto-assigned feature ID.
-  const originalFeatureId = featureId;
-  if (featureId.startsWith('GH-') && phase === 'specify') {
-    const featureName = item.title.replace(/^SpecFlow \w+: /, '');
-    const featureDesc = item.description ?? featureName;
-    const addResult = await spawner(
-      ['add', featureName, featureDesc, '--priority', '1'],
-      worktreePath,
-      30_000
-    );
-    if (addResult.exitCode === 0) {
-      // Parse "Added feature F-019: ..." to get the real specflow ID
-      const match = addResult.stdout.match(/Added feature (F-\d+)/);
-      if (match) {
-        featureId = match[1];
-        meta.specflow_feature_id = featureId;
-      }
-      bb.appendEvent({
-        actorId: sessionId,
-        targetId: item.item_id,
-        summary: `Registered feature ${originalFeatureId} as ${featureId} in specflow`,
-        metadata: { githubFeatureId: originalFeatureId, specflowFeatureId: featureId },
-      });
+  // ─── Ensure feature exists in specflow DB ──────────────────────────
+  // GH-* features (from the evaluator) need initial registration.
+  // F-NNN features may also need re-registration in retries when the
+  // worktree was recreated with a fresh specflow.db from features.json.
+  if (phase === 'specify') {
+    // Check if the feature exists via specflow status --json
+    const checkResult = await spawner(['status', '--json'], worktreePath, 10_000);
+    const featureMissing = checkResult.exitCode !== 0
+      || !checkResult.stdout.includes(`"id":"${featureId}"`)
+      && !checkResult.stdout.includes(`"id": "${featureId}"`);
 
-      // Enrich with defaults so batch specify can run
-      await spawner([
-        'enrich', featureId,
-        '--problem-type', 'manual_workaround',
-        '--urgency', 'user_demand',
-        '--primary-user', 'developers',
-        '--integration-scope', 'extends_existing',
-      ], worktreePath, 30_000);
-    } else {
-      bb.appendEvent({
-        actorId: sessionId,
-        targetId: item.item_id,
-        summary: `Failed to register feature ${featureId} in specflow (exit ${addResult.exitCode})`,
-        metadata: { stderr: addResult.stderr.slice(0, 500) },
-      });
-      return false;
+    if (featureMissing) {
+      const originalFeatureId = featureId;
+      const featureName = item.title.replace(/^SpecFlow \w+.*?: /, '');
+      const featureDesc = item.description ?? featureName;
+      const addResult = await spawner(
+        ['add', featureName, featureDesc, '--priority', '1'],
+        worktreePath,
+        30_000
+      );
+      if (addResult.exitCode === 0) {
+        // Parse "Added feature F-019: ..." to get the specflow ID
+        const match = addResult.stdout.match(/Added feature (F-\d+)/);
+        if (match) {
+          featureId = match[1];
+          meta.specflow_feature_id = featureId;
+        }
+        bb.appendEvent({
+          actorId: sessionId,
+          targetId: item.item_id,
+          summary: `Registered feature ${originalFeatureId} as ${featureId} in specflow`,
+          metadata: { originalFeatureId, specflowFeatureId: featureId },
+        });
+
+        // Enrich with defaults so batch specify can run
+        await spawner([
+          'enrich', featureId,
+          '--problem-type', 'manual_workaround',
+          '--urgency', 'user_demand',
+          '--primary-user', 'developers',
+          '--integration-scope', 'extends_existing',
+        ], worktreePath, 30_000);
+      } else {
+        bb.appendEvent({
+          actorId: sessionId,
+          targetId: item.item_id,
+          summary: `Failed to register feature ${featureId} in specflow (exit ${addResult.exitCode})`,
+          metadata: { stderr: addResult.stderr.slice(0, 500) },
+        });
+        return false;
+      }
     }
   }
 
@@ -312,6 +322,8 @@ export async function runSpecFlowPhase(
           summary: `Quality gate failed (${gateResult.score}%) — retrying ${featureId} phase "${phase}" (attempt ${retryCount + 1}/${MAX_RETRIES})`,
           metadata: { phase, score: gateResult.score, retryCount: retryCount + 1 },
         });
+        // Return true: retry supersedes original item — caller should complete it
+        return true;
       } else {
         bb.appendEvent({
           actorId: sessionId,
@@ -319,9 +331,9 @@ export async function runSpecFlowPhase(
           summary: `Quality gate failed (${gateResult.score}%) — max retries exceeded for ${featureId} phase "${phase}"`,
           metadata: { phase, score: gateResult.score, maxRetries: MAX_RETRIES },
         });
-        // Mark as failed — caller will handle the item
+        // Return true: pipeline exhausted — complete item, don't release for infinite re-dispatch
+        return true;
       }
-      return false;
     }
 
     bb.appendEvent({
@@ -480,6 +492,10 @@ async function chainNextPhase(
     worktree_path: worktreePath,
     main_branch: mainBranch,
     retry_count: 0,
+    // Carry GitHub metadata for evaluator dedup
+    github_issue_url: meta.github_issue_url,
+    github_issue_number: meta.github_issue_number,
+    github_repo: meta.github_repo,
   };
 
   bb.createWorkItem({
@@ -488,7 +504,7 @@ async function chainNextPhase(
     description: `SpecFlow phase "${next}" for feature ${meta.specflow_feature_id}`,
     project: meta.specflow_project_id,
     source: 'specflow',
-    sourceRef: meta.specflow_feature_id,
+    sourceRef: meta.github_issue_url ?? meta.specflow_feature_id,
     priority: item.priority ?? 'P2',
     metadata: JSON.stringify(newMeta),
   });
@@ -514,6 +530,10 @@ async function chainRetry(
     main_branch: mainBranch,
     retry_count: retryCount,
     eval_feedback: feedback,
+    // Carry GitHub metadata for evaluator dedup
+    github_issue_url: meta.github_issue_url,
+    github_issue_number: meta.github_issue_number,
+    github_repo: meta.github_repo,
   };
 
   bb.createWorkItem({
@@ -522,7 +542,7 @@ async function chainRetry(
     description: `SpecFlow phase "${meta.specflow_phase}" retry for feature ${meta.specflow_feature_id}\n\nEval feedback:\n${feedback}`,
     project: meta.specflow_project_id,
     source: 'specflow',
-    sourceRef: meta.specflow_feature_id,
+    sourceRef: meta.github_issue_url ?? meta.specflow_feature_id,
     priority: item.priority ?? 'P2',
     metadata: JSON.stringify(newMeta),
   });
