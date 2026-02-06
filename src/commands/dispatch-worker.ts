@@ -2,7 +2,8 @@ import { Command } from 'commander';
 import type { CliContext } from '../cli.ts';
 import { getLauncher, logPathForSession } from '../scheduler/launcher.ts';
 import {
-  isCleanBranch,
+  stashIfDirty,
+  popStash,
   getCurrentBranch,
   createWorktree,
   removeWorktree,
@@ -312,21 +313,19 @@ export function registerDispatchWorkerCommand(
       let worktreePath: string | null = null;
       let branch: string | null = null;
       let mainBranch: string | null = null;
+      let didStash = false;
 
       // Set up worktree for GitHub items
       if (ghMeta.isGithub && ghMeta.issueNumber) {
         try {
-          // Pre-flight: check that main branch is clean
-          const clean = await isCleanBranch(project.local_path);
-          if (!clean) {
+          // Stash uncommitted changes if main is dirty
+          didStash = await stashIfDirty(project.local_path);
+          if (didStash) {
             bb.appendEvent({
               actorId: sessionId,
               targetId: itemId,
-              summary: `Skipping "${item.title}": main branch has uncommitted changes in ${project.local_path} — commit or stash to unblock dispatch`,
+              summary: `Auto-stashed uncommitted changes in ${project.local_path} before worktree creation`,
             });
-            try { bb.releaseWorkItem(itemId, sessionId); } catch { /* best effort */ }
-            try { bb.deregisterAgent(sessionId); } catch { /* best effort */ }
-            process.exit(1);
           }
 
           mainBranch = await getCurrentBranch(project.local_path);
@@ -348,6 +347,10 @@ export function registerDispatchWorkerCommand(
             summary: `Failed to create worktree for "${item.title}": ${msg}`,
             metadata: { error: msg },
           });
+          // Restore stash before exiting
+          if (didStash) {
+            await popStash(project.local_path);
+          }
           try { bb.releaseWorkItem(itemId, sessionId); } catch { /* best effort */ }
           try { bb.deregisterAgent(sessionId); } catch { /* best effort */ }
           process.exit(1);
@@ -639,6 +642,17 @@ export function registerDispatchWorkerCommand(
               metadata: { worktreePath, error: msg },
             });
           }
+        }
+        // Restore stashed changes
+        if (didStash) {
+          const restored = await popStash(project.local_path);
+          bb.appendEvent({
+            actorId: sessionId,
+            targetId: itemId,
+            summary: restored
+              ? `Restored stashed changes in ${project.local_path}`
+              : `Failed to restore stash in ${project.local_path} — run 'git stash pop' manually`,
+          });
         }
         try { bb.deregisterAgent(sessionId); } catch { /* best effort */ }
       }

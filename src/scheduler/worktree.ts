@@ -82,6 +82,33 @@ export async function isCleanBranch(projectPath: string): Promise<boolean> {
 }
 
 /**
+ * Stash uncommitted changes if the working tree is dirty.
+ * Returns true if a stash was created, false if the tree was already clean.
+ */
+export async function stashIfDirty(projectPath: string): Promise<boolean> {
+  const clean = await isCleanBranch(projectPath);
+  if (clean) return false;
+
+  await git(['stash', 'push', '-m', 'ivy-heartbeat: auto-stash before worktree'], projectPath);
+  return true;
+}
+
+/**
+ * Pop the most recent stash entry. Only call if stashIfDirty() returned true.
+ * Non-fatal: logs but does not throw on failure.
+ */
+export async function popStash(projectPath: string): Promise<boolean> {
+  try {
+    await git(['stash', 'pop'], projectPath);
+    return true;
+  } catch {
+    // Stash pop can fail if there are conflicts — leave stash intact
+    // User can resolve manually with `git stash pop` or `git stash drop`
+    return false;
+  }
+}
+
+/**
  * Get the current branch name.
  */
 export async function getCurrentBranch(projectPath: string): Promise<string> {

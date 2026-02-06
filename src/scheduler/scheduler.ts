@@ -4,6 +4,8 @@ import type { BlackboardWorkItem } from 'ivy-blackboard/src/types';
 import { getLauncher, resolveLogDir, logPathForSession } from './launcher.ts';
 import {
   isCleanBranch,
+  stashIfDirty,
+  popStash,
   getCurrentBranch,
   createWorktree,
   removeWorktree,
@@ -409,18 +411,17 @@ export async function dispatch(
       let branch: string | null = null;
       let mainBranch: string | null = null;
 
+      let didStash = false;
+
       if (ghMeta.isGithub && ghMeta.issueNumber) {
         try {
-          const clean = await isCleanBranch(project.local_path);
-          if (!clean) {
-            result.skipped.push({
-              itemId: item.item_id,
-              title: item.title,
-              reason: `main branch has uncommitted changes in ${project.local_path} — commit or stash to unblock dispatch`,
+          didStash = await stashIfDirty(project.local_path);
+          if (didStash) {
+            bb.appendEvent({
+              actorId: sessionId,
+              targetId: item.item_id,
+              summary: `Auto-stashed uncommitted changes in ${project.local_path} before worktree creation`,
             });
-            bb.releaseWorkItem(item.item_id, sessionId);
-            bb.deregisterAgent(sessionId);
-            continue;
           }
 
           mainBranch = await getCurrentBranch(project.local_path);
@@ -637,6 +638,17 @@ export async function dispatch(
         // Always clean up worktree if created
         if (worktreePath) {
           try { await removeWorktree(project.local_path, worktreePath); } catch { /* best effort */ }
+        }
+        // Restore stashed changes
+        if (didStash) {
+          const restored = await popStash(project.local_path);
+          bb.appendEvent({
+            actorId: sessionId,
+            targetId: item.item_id,
+            summary: restored
+              ? `Restored stashed changes in ${project.local_path}`
+              : `Failed to restore stash in ${project.local_path} — run 'git stash pop' manually`,
+          });
         }
       }
     }
