@@ -99,6 +99,13 @@ describe('web dashboard server', () => {
     const res = await fetch(`${baseUrl}/unknown`);
     expect(res.status).toBe(404);
   });
+
+  test('CORS header restricts origin to localhost with server port', async () => {
+    const res = await fetch(`${baseUrl}/api/events`);
+    const origin = res.headers.get('access-control-allow-origin');
+    expect(origin).toBe(`http://localhost:${server.port}`);
+    expect(origin).not.toBe('*');
+  });
 });
 
 describe('dashboard HTML', () => {

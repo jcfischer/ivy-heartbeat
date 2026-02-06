@@ -31,7 +31,7 @@ export function startServer(bb: Blackboard, opts: Partial<ServerOptions> = {}) {
 
       // CORS headers for local development
       const headers = {
-        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Origin': `http://localhost:${port}`,
         'Content-Type': 'application/json',
       };
 
