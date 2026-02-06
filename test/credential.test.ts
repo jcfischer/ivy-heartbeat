@@ -91,7 +91,7 @@ describe('credential scope config', () => {
 
   test('returns default config when file does not exist', () => {
     const config = loadScopeConfig(join(tmpDir, 'nonexistent.json'));
-    expect(config.defaultPolicy).toBe('allow');
+    expect(config.defaultPolicy).toBe('deny');
     expect(config.rules).toEqual({});
   });
 
@@ -116,7 +116,7 @@ describe('credential scope config', () => {
     writeFileSync(configPath, 'not valid json {{{');
 
     const config = loadScopeConfig(configPath);
-    expect(config.defaultPolicy).toBe('allow');
+    expect(config.defaultPolicy).toBe('deny');
   });
 });
 

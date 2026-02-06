@@ -8,7 +8,7 @@ const CONFIG_PATH = join(homedir(), '.pai', 'credential-scopes.json');
 
 /**
  * Load credential scope config from ~/.pai/credential-scopes.json.
- * Returns default allow-all config if file doesn't exist.
+ * Returns default deny-all config if file doesn't exist.
  */
 export function loadScopeConfig(path?: string): CredentialScopeConfig {
   const configPath = path ?? CONFIG_PATH;
@@ -21,7 +21,7 @@ export function loadScopeConfig(path?: string): CredentialScopeConfig {
     const raw = readFileSync(configPath, 'utf-8');
     const parsed = JSON.parse(raw);
     return {
-      defaultPolicy: parsed.defaultPolicy ?? 'allow',
+      defaultPolicy: parsed.defaultPolicy ?? 'deny',
       rules: parsed.rules ?? {},
     };
   } catch {
