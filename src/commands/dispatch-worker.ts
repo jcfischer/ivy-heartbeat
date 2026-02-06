@@ -7,6 +7,7 @@ import {
   getCurrentBranch,
   createWorktree,
   removeWorktree,
+  resolveWorktreePath,
   commitAll,
   pushBranch,
   createPR,
@@ -17,6 +18,7 @@ import {
 } from '../scheduler/worktree.ts';
 import { parseSpecFlowMeta } from '../scheduler/specflow-types.ts';
 import { runSpecFlowPhase } from '../scheduler/specflow-runner.ts';
+import { parseMergeFixMeta, createMergeFixWorkItem, runMergeFix } from '../scheduler/merge-fix.ts';
 import { getTanaAccessor } from '../evaluators/tana-accessor.ts';
 
 /**
@@ -307,6 +309,29 @@ export function registerDispatchWorkerCommand(
         return;
       }
 
+      // Determine if this is a merge-fix recovery work item
+      const mfMeta = parseMergeFixMeta(item.metadata);
+      if (mfMeta && project) {
+        const mfWorktreePath = resolveWorktreePath(project.local_path, mfMeta.branch, mfMeta.project_id);
+        try {
+          await runMergeFix(bb, item, mfMeta, project, sessionId, launcher, timeoutMs);
+          bb.completeWorkItem(itemId, sessionId);
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          try { bb.releaseWorkItem(itemId, sessionId); } catch { /* best effort */ }
+          bb.appendEvent({
+            actorId: sessionId,
+            targetId: itemId,
+            summary: `Merge-fix failed for PR #${mfMeta.pr_number}: ${msg}`,
+            metadata: { error: msg },
+          });
+        } finally {
+          try { await removeWorktree(project.local_path, mfWorktreePath); } catch { /* best effort */ }
+          try { bb.deregisterAgent(sessionId); } catch { /* best effort */ }
+        }
+        return;
+      }
+
       // Determine if this is a GitHub work item
       const ghMeta = parseGithubMeta(item.metadata);
       let workDir = resolvedWorkDir;
@@ -456,20 +481,44 @@ export function registerDispatchWorkerCommand(
                         });
                       }
                     } else {
+                      // Create recovery work item for merge failure
+                      const mergeFixId = createMergeFixWorkItem(bb, {
+                        originalItemId: itemId,
+                        prNumber: pr.number,
+                        prUrl: pr.url,
+                        branch: branch!,
+                        mainBranch: mainBranch!,
+                        issueNumber: ghMeta.issueNumber,
+                        projectId: item.project_id!,
+                        originalTitle: item.title,
+                        sessionId,
+                      });
                       bb.appendEvent({
                         actorId: sessionId,
                         targetId: itemId,
-                        summary: `Auto-merge failed for PR #${pr.number} — left open for manual review`,
-                        metadata: { prNumber: pr.number, autoMerge: false },
+                        summary: `Auto-merge failed for PR #${pr.number} — created recovery item ${mergeFixId}`,
+                        metadata: { prNumber: pr.number, autoMerge: false, mergeFixItemId: mergeFixId },
                       });
                     }
                   } catch (mergeErr: unknown) {
                     const mergeMsg = mergeErr instanceof Error ? mergeErr.message : String(mergeErr);
+                    // Create recovery work item for merge error
+                    const mergeFixId = createMergeFixWorkItem(bb, {
+                      originalItemId: itemId,
+                      prNumber: pr.number,
+                      prUrl: pr.url,
+                      branch: branch!,
+                      mainBranch: mainBranch!,
+                      issueNumber: ghMeta.issueNumber,
+                      projectId: item.project_id!,
+                      originalTitle: item.title,
+                      sessionId,
+                    });
                     bb.appendEvent({
                       actorId: sessionId,
                       targetId: itemId,
-                      summary: `Auto-merge error for PR #${pr.number} (non-fatal): ${mergeMsg}`,
-                      metadata: { prNumber: pr.number, error: mergeMsg },
+                      summary: `Auto-merge error for PR #${pr.number}: ${mergeMsg} — created recovery item ${mergeFixId}`,
+                      metadata: { prNumber: pr.number, error: mergeMsg, mergeFixItemId: mergeFixId },
                     });
                   }
                 }
@@ -658,3 +707,5 @@ export function registerDispatchWorkerCommand(
       }
     });
 }
+
+

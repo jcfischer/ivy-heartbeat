@@ -9,6 +9,9 @@ import {
   removeWorktree,
   commitAll,
   buildCommentPrompt,
+  resolveWorktreePath,
+  rebaseOnMain,
+  getConflictedFiles,
 } from '../src/scheduler/worktree.ts';
 
 /**
@@ -238,5 +241,76 @@ describe('buildCommentPrompt', () => {
 
     expect(prompt).toContain('#1');
     expect(prompt).not.toContain('Issue body:');
+  });
+});
+
+describe('resolveWorktreePath', () => {
+  test('uses projectId when provided', () => {
+    const path = resolveWorktreePath('/some/project', 'fix/issue-42', 'my-project');
+    expect(path).toContain('my-project');
+    expect(path).toContain('fix/issue-42');
+  });
+
+  test('derives dir name from project path when no projectId', () => {
+    const path = resolveWorktreePath('/some/project', 'fix/issue-42');
+    expect(path).toContain('project');
+    expect(path).toContain('fix/issue-42');
+  });
+});
+
+describe('rebaseOnMain', () => {
+  let repoDir: string;
+
+  beforeEach(async () => {
+    repoDir = await initTestRepo();
+  });
+
+  afterEach(() => {
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  test('returns false when rebase fails (no remote)', async () => {
+    // Create a branch with a commit
+    const run = async (args: string[]) => {
+      const proc = Bun.spawn(['git', ...args], {
+        cwd: repoDir,
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: 'Test',
+          GIT_AUTHOR_EMAIL: 'test@test.com',
+          GIT_COMMITTER_NAME: 'Test',
+          GIT_COMMITTER_EMAIL: 'test@test.com',
+        },
+      });
+      await proc.exited;
+    };
+
+    await run(['checkout', '-b', 'fix/test']);
+    writeFileSync(join(repoDir, 'test.txt'), 'content');
+    await run(['add', 'test.txt']);
+    await run(['commit', '-m', 'test commit']);
+
+    // rebase on main will fail because there's no remote
+    const result = await rebaseOnMain(repoDir, 'main');
+    expect(result).toBe(false);
+  });
+});
+
+describe('getConflictedFiles', () => {
+  let repoDir: string;
+
+  beforeEach(async () => {
+    repoDir = await initTestRepo();
+  });
+
+  afterEach(() => {
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  test('returns empty array when no conflicts', async () => {
+    const files = await getConflictedFiles(repoDir);
+    expect(files).toEqual([]);
   });
 });
