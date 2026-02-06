@@ -14,6 +14,6 @@ export interface CredentialScopeConfig {
 }
 
 export const DEFAULT_SCOPE_CONFIG: CredentialScopeConfig = {
-  defaultPolicy: 'allow',
+  defaultPolicy: 'deny',
   rules: {},
 };
