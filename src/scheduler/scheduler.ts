@@ -446,6 +446,7 @@ export async function dispatch(
           prompt,
           timeoutMs: opts.timeout * 60 * 1000,
           sessionId,
+          disableMcp: true,
         });
 
         const durationMs = Date.now() - startTime;

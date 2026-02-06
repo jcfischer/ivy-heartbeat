@@ -90,6 +90,95 @@ If you discover that completing this task requires changes in another project:
 3. Your current work item will be paused until the dependency resolves.
 `;
 
+const TOOL_HINTS = `
+## Tool Hints — Tana Access via supertag CLI
+
+MCP is disabled in this session. Use \`supertag\` CLI (~/bin/supertag) for ALL Tana operations.
+Commands marked (local API) talk directly to the running Tana app — no stale data.
+
+### Search & Read
+
+\`\`\`bash
+# Full-text search
+supertag search "meeting notes" --limit 10
+
+# Find nodes by supertag
+supertag search --tag person --limit 20
+supertag search "Zurich" --tag company
+
+# Filter by field value
+supertag search --tag person --field "Location=Zurich"
+
+# Show a specific node (with children)
+supertag nodes show <nodeId> --depth 2
+
+# Show node as JSON
+supertag nodes show <nodeId> --json --depth 2
+
+# List all supertags
+supertag tags list
+
+# Show supertag schema (fields, types, options)
+supertag tags show <tagname>
+
+# Natural language query
+supertag query "find task where Status = Done"
+\`\`\`
+
+### Create & Write
+
+\`\`\`bash
+# Create a tagged node (posts to Tana Input API)
+supertag create <supertag> "Node name" --field1 "value" --field2 "value"
+
+# Example: create a person
+supertag create person "Jane Doe" --email "jane@example.com" --company "Acme"
+
+# Create with children
+supertag create meeting "Q1 Review" -c "Discussed roadmap" -c "Action: follow up"
+
+# Post to a specific target node
+supertag create todo "Buy groceries" -t <parentNodeId>
+\`\`\`
+
+### Edit & Update (requires local API)
+
+\`\`\`bash
+# Edit node name
+supertag edit <nodeId> --name "New name"
+
+# Edit node description
+supertag edit <nodeId> --description "Updated description"
+
+# Set a field value on a node
+supertag set-field <nodeId> <fieldName> "value"
+
+# Set an option field by option ID
+supertag set-field <nodeId> Status "Done" --option-id <optionId>
+
+# Add a tag to a node
+supertag tag add <nodeId> <tagNameOrId>
+
+# Remove a tag
+supertag tag remove <nodeId> <tagNameOrId>
+
+# Mark node as done (check off)
+supertag done <nodeId>
+
+# Mark node as not done
+supertag undone <nodeId>
+
+# Move node to trash
+supertag trash <nodeId>
+\`\`\`
+
+### Tips
+- Use \`--json\` on any read command for machine-parseable output
+- Use \`--depth N\` to control how many levels of children to fetch
+- Use \`supertag tags show <name>\` to discover field names before setting them
+- The local API commands (edit, set-field, tag, done) require Tana Desktop to be running
+`;
+
 /**
  * Build the prompt for a Claude Code session working on a work item.
  * No git instructions — the dispatch worker handles all git operations.
@@ -110,6 +199,7 @@ function buildPrompt(
     `\nWork item ID: ${itemId}`,
     `Session ID: ${sessionId}`,
     CROSS_PROJECT_DEPENDENCY_INSTRUCTIONS,
+    TOOL_HINTS,
     `\nWhen you are done, summarize what you accomplished.`
   );
 
@@ -295,6 +385,7 @@ export function registerDispatchWorkerCommand(
           prompt,
           timeoutMs,
           sessionId,
+          disableMcp: true,
         });
 
         const durationMs = Date.now() - startTime;
@@ -399,6 +490,7 @@ export function registerDispatchWorkerCommand(
                     prompt: commentPrompt,
                     timeoutMs: 120_000, // 2 minute timeout
                     sessionId: `${sessionId}-comment`,
+                    disableMcp: true,
                   });
 
                   if (commentResult.exitCode === 0) {

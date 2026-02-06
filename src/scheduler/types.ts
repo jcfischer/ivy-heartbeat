@@ -24,6 +24,8 @@ export interface LaunchOptions {
   timeoutMs: number;
   /** Session ID for logging */
   sessionId: string;
+  /** Disable all MCP servers (uses --strict-mcp-config with no config) */
+  disableMcp?: boolean;
 }
 
 export interface LaunchResult {

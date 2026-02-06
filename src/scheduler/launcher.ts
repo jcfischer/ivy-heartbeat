@@ -215,15 +215,18 @@ async function defaultLauncher(opts: LaunchOptions): Promise<LaunchResult> {
     '',
   ].join('\n'));
 
-  const proc = Bun.spawn(
-    ['claude', '--print', '--verbose', '--output-format', 'stream-json', opts.prompt],
-    {
-      cwd: opts.workDir,
-      stdout: 'pipe',
-      stderr: 'pipe',
-      env: { ...process.env },
-    }
-  );
+  const args = ['claude', '--print', '--verbose', '--output-format', 'stream-json'];
+  if (opts.disableMcp) {
+    args.push('--strict-mcp-config');
+  }
+  args.push(opts.prompt);
+
+  const proc = Bun.spawn(args, {
+    cwd: opts.workDir,
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: { ...process.env },
+  });
 
   // Set up timeout
   const timeoutId = setTimeout(() => {
