@@ -71,6 +71,15 @@ function worktreeBaseDir(): string {
   return join(home, '.pai', 'worktrees');
 }
 
+/**
+ * Resolve the expected worktree path for a given project + branch combination.
+ * Matches the path derivation used by createWorktree().
+ */
+export function resolveWorktreePath(projectPath: string, branch: string, projectId?: string): string {
+  const dirName = projectId ?? projectPath.split('/').pop() ?? 'unknown';
+  return join(worktreeBaseDir(), dirName, branch);
+}
+
 // ─── Pre-flight ───────────────────────────────────────────────────────────
 
 /**
@@ -266,6 +275,68 @@ export async function createPR(
   const match = url.match(/\/pull\/(\d+)$/);
   const number = match ? parseInt(match[1], 10) : 0;
   return { number, url };
+}
+
+// ─── Merge-fix helpers ────────────────────────────────────────────────────
+
+/**
+ * Rebase the current branch on top of the given base branch.
+ * Returns true if rebase succeeds cleanly, false if there are conflicts.
+ */
+export async function rebaseOnMain(
+  worktreePath: string,
+  mainBranch: string
+): Promise<boolean> {
+  // Fetch latest first
+  try {
+    await git(['fetch', 'origin'], worktreePath);
+  } catch {
+    // May fail if no remote — continue with local
+  }
+
+  try {
+    await git(['rebase', `origin/${mainBranch}`], worktreePath);
+    return true;
+  } catch {
+    // Check if we're mid-rebase with conflicts
+    const conflicted = await getConflictedFiles(worktreePath);
+    if (conflicted.length > 0) {
+      // Abort the rebase so the caller can decide what to do
+      try {
+        await git(['rebase', '--abort'], worktreePath);
+      } catch {
+        // Best effort abort
+      }
+    }
+    return false;
+  }
+}
+
+/**
+ * Force-push the current branch to origin.
+ * Used after a successful rebase to update the PR branch.
+ */
+export async function forcePushBranch(
+  worktreePath: string,
+  branch: string
+): Promise<void> {
+  await git(['push', '--force-with-lease', 'origin', branch], worktreePath);
+}
+
+/**
+ * Get the list of files with merge conflicts.
+ * Returns an empty array if no conflicts.
+ */
+export async function getConflictedFiles(
+  worktreePath: string
+): Promise<string[]> {
+  try {
+    const output = await git(['diff', '--name-only', '--diff-filter=U'], worktreePath);
+    if (!output) return [];
+    return output.split('\n').filter(Boolean);
+  } catch {
+    return [];
+  }
 }
 
 // ─── Post-agent merge & sync ──────────────────────────────────────────────
