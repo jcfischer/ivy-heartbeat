@@ -24,7 +24,7 @@ import { getTanaAccessor } from '../evaluators/tana-accessor.ts';
 /**
  * Parse work item metadata to extract GitHub-specific fields.
  */
-function parseGithubMeta(metadata: string | null): {
+function parseGithubMeta(metadata: string | null, sourceRef?: string | null): {
   isGithub: boolean;
   issueNumber?: number;
   repo?: string;
@@ -32,21 +32,37 @@ function parseGithubMeta(metadata: string | null): {
   issueBody?: string;
   humanReviewRequired?: boolean;
 } {
-  if (!metadata) return { isGithub: false };
-  try {
-    const parsed = JSON.parse(metadata);
-    if (parsed.github_issue_number && parsed.github_repo) {
+  // Try metadata first
+  if (metadata) {
+    try {
+      const parsed = JSON.parse(metadata);
+      if (parsed.github_issue_number && parsed.github_repo) {
+        return {
+          isGithub: true,
+          issueNumber: parsed.github_issue_number,
+          repo: parsed.github_repo,
+          author: parsed.author,
+          humanReviewRequired: parsed.human_review_required !== false,
+        };
+      }
+    } catch {
+      // Invalid metadata JSON
+    }
+  }
+
+  // Fallback: infer from source_ref URL (e.g. https://github.com/owner/repo/issues/123)
+  if (sourceRef) {
+    const match = sourceRef.match(/github\.com\/([^/]+\/[^/]+)\/issues\/(\d+)/);
+    if (match) {
       return {
         isGithub: true,
-        issueNumber: parsed.github_issue_number,
-        repo: parsed.github_repo,
-        author: parsed.author,
-        humanReviewRequired: parsed.human_review_required !== false,
+        issueNumber: parseInt(match[2], 10),
+        repo: match[1],
+        humanReviewRequired: true, // conservative default for inferred items
       };
     }
-  } catch {
-    // Invalid metadata JSON
   }
+
   return { isGithub: false };
 }
 
@@ -441,7 +457,7 @@ export function registerDispatchWorkerCommand(
       }
 
       // Determine if this is a GitHub work item
-      const ghMeta = parseGithubMeta(item.metadata);
+      const ghMeta = parseGithubMeta(item.metadata, item.source_ref);
       let workDir = resolvedWorkDir;
       let worktreePath: string | null = null;
       let branch: string | null = null;

@@ -208,6 +208,7 @@ export type BlackboardAccessor = {
     priority?: string;
     metadata?: string;
   }): unknown;
+  updateWorkItemMetadata(itemId: string, updates: Record<string, unknown>): unknown;
 };
 
 let bbAccessor: BlackboardAccessor | null = null;
@@ -377,7 +378,22 @@ export async function evaluateGithubIssues(item: ChecklistItem): Promise<CheckRe
               url: issue.url,
             });
           } catch {
-            // Work item may already exist — skip
+            // Work item already exists — backfill metadata if missing
+            try {
+              const existing = existingItems.find((i) => i.source_ref === issue.url);
+              if (existing && !existing.metadata) {
+                bbAccessor.updateWorkItemMetadata(sfItemId, {
+                  specflow_feature_id: featureId,
+                  specflow_phase: 'specify',
+                  specflow_project_id: project.project_id,
+                  github_issue_number: issue.number,
+                  github_issue_url: issue.url,
+                  github_repo: ownerRepo,
+                  content_filtered: true,
+                  content_blocked: contentBlocked,
+                });
+              }
+            } catch { /* best effort metadata backfill */ }
           }
           continue;
         }
@@ -451,7 +467,24 @@ export async function evaluateGithubIssues(item: ChecklistItem): Promise<CheckRe
             url: issue.url,
           });
         } catch {
-          // Work item may already exist (race condition) — skip
+          // Work item already exists — backfill metadata if missing
+          try {
+            const existing = existingItems.find((i) => i.source_ref === issue.url);
+            if (existing && !existing.metadata) {
+              bbAccessor.updateWorkItemMetadata(itemId, {
+                github_issue_number: issue.number,
+                github_repo: ownerRepo,
+                author: issue.author.login,
+                labels: issue.labels.map((l) => l.name),
+                workflow: isOwner ? 'investigate-branch-implement-test-commit-push-comment' : 'acknowledge-investigate-branch-implement-test-commit-push-comment',
+                human_review_required: !isOwner,
+                content_filtered: true,
+                content_blocked: contentBlocked,
+                content_warning: contentWarning,
+                filter_matches: filterResult.matches.map((m) => m.pattern_id),
+              });
+            }
+          } catch { /* best effort metadata backfill */ }
         }
       }
     }
