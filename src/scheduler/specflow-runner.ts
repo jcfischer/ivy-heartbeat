@@ -6,7 +6,7 @@
  */
 
 import { join, dirname } from 'node:path';
-import { existsSync, readdirSync, mkdirSync, symlinkSync, lstatSync } from 'node:fs';
+import { existsSync, readdirSync, mkdirSync, symlinkSync, lstatSync, cpSync } from 'node:fs';
 import type { Blackboard } from '../blackboard.ts';
 import type { BlackboardWorkItem } from 'ivy-blackboard/src/types';
 import { getLauncher, logPathForSession } from './launcher.ts';
@@ -278,6 +278,46 @@ export async function runSpecFlowPhase(
         summary: `Initialized specflow database in worktree`,
         metadata: { worktreePath },
       });
+    }
+  }
+
+  // ─── Sync untracked spec artifacts to worktree ─────────────────────
+  // Spec artifacts (spec.md, plan.md, tasks.md) are often untracked/gitignored
+  // in the source repo, so they don't appear in the worktree after checkout.
+  // Copy any that exist in source but not in worktree.
+  const specDirs = ['.specify/specs', '.specflow/specs'];
+  for (const specBase of specDirs) {
+    const sourceSpecDir = join(project.local_path, specBase);
+    if (!existsSync(sourceSpecDir)) continue;
+
+    try {
+      const entries = readdirSync(sourceSpecDir, { withFileTypes: true });
+      const prefix = featureId.toLowerCase();
+      for (const entry of entries) {
+        if (!entry.isDirectory() || !entry.name.toLowerCase().startsWith(prefix)) continue;
+
+        const sourceFeatureDir = join(sourceSpecDir, entry.name);
+        const destFeatureDir = join(worktreePath, specBase, entry.name);
+        mkdirSync(destFeatureDir, { recursive: true });
+
+        for (const artifact of readdirSync(sourceFeatureDir)) {
+          const src = join(sourceFeatureDir, artifact);
+          const dest = join(destFeatureDir, artifact);
+          if (!existsSync(dest)) {
+            cpSync(src, dest, { recursive: true });
+          }
+        }
+
+        bb.appendEvent({
+          actorId: sessionId,
+          targetId: item.item_id,
+          summary: `Synced spec artifacts from source to worktree for ${featureId}`,
+          metadata: { sourceDir: sourceFeatureDir, destDir: destFeatureDir },
+        });
+        break; // Found the matching feature dir
+      }
+    } catch {
+      // Non-fatal — specflow will report missing artifacts
     }
   }
 
