@@ -5,8 +5,8 @@
  * and chains the next phase by creating a new work item.
  */
 
-import { join } from 'node:path';
-import { existsSync, readdirSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { existsSync, readdirSync, mkdirSync, symlinkSync, lstatSync } from 'node:fs';
 import type { Blackboard } from '../blackboard.ts';
 import type { BlackboardWorkItem } from 'ivy-blackboard/src/types';
 import { getLauncher, logPathForSession } from './launcher.ts';
@@ -152,8 +152,8 @@ export async function runSpecFlowPhase(
   const mainBranch = meta.main_branch ?? await worktreeOps.getCurrentBranch(project.local_path);
   const branch = `specflow-${featureId.toLowerCase()}`;
 
-  if (phase === 'specify' && !meta.worktree_path) {
-    // First phase: create fresh worktree
+  if (!meta.worktree_path) {
+    // First phase in pipeline (no worktree yet): create fresh worktree
     worktreePath = await worktreeOps.createWorktree(
       project.local_path,
       branch,
@@ -184,38 +184,101 @@ export async function runSpecFlowPhase(
   const specflowDbPath = join(worktreePath, '.specflow', 'features.db');
   const legacyDbPath = join(worktreePath, '.specify', 'specflow.db');
   if (!existsSync(specflowDbPath) && !existsSync(legacyDbPath)) {
-    // Try init strategies in order of preference:
-    // 1. --from-features (imports existing feature definitions)
-    // 2. --batch with --from-spec (non-interactive, uses app context)
-    // 3. --batch with project ID as description (minimal fallback)
-    const featuresPath = join(worktreePath, 'features.json');
-    const appContextPath = join(worktreePath, '.specify', 'app-context.md');
+    // Strategy 0 (fastest + safest): symlink .specflow/ from worktree to source repo.
+    // .specflow/ is gitignored so worktrees don't get it automatically.
+    // Symlink means all agents share ONE DB — no divergent copies, no data loss.
+    // SQLite handles concurrent readers natively; WAL mode serializes writes.
+    const sourceSpecflowDir = join(project.local_path, '.specflow');
+    const sourceLegacyDir = join(project.local_path, '.specify');
+    const worktreeSpecflowDir = join(worktreePath, '.specflow');
+    let dbLinked = false;
 
-    let initArgs: string[];
-    if (existsSync(featuresPath)) {
-      initArgs = ['init', '--from-features', featuresPath];
-    } else if (existsSync(appContextPath)) {
-      initArgs = ['init', '--batch', '--from-spec', appContextPath];
-    } else {
-      initArgs = ['init', '--batch', project.project_id];
+    if (existsSync(join(sourceSpecflowDir, 'features.db'))) {
+      try {
+        // Remove worktree .specflow if it exists (empty dir from checkout)
+        if (existsSync(worktreeSpecflowDir)) {
+          const stat = lstatSync(worktreeSpecflowDir);
+          if (!stat.isSymbolicLink()) {
+            // Directory exists but isn't a symlink — safe to replace since
+            // we know it has no features.db (checked above in outer if)
+          }
+        } else {
+          mkdirSync(dirname(worktreeSpecflowDir), { recursive: true });
+        }
+        // Create symlink: worktree/.specflow → source/.specflow
+        if (!existsSync(worktreeSpecflowDir)) {
+          symlinkSync(sourceSpecflowDir, worktreeSpecflowDir, 'dir');
+        } else {
+          // Directory exists (possibly empty from git) — symlink individual DB files
+          symlinkSync(
+            join(sourceSpecflowDir, 'features.db'),
+            join(worktreeSpecflowDir, 'features.db')
+          );
+        }
+        dbLinked = true;
+        bb.appendEvent({
+          actorId: sessionId,
+          targetId: item.item_id,
+          summary: `Symlinked specflow DB from source repo to worktree (shared, concurrent-safe)`,
+          metadata: { source: sourceSpecflowDir, dest: worktreeSpecflowDir },
+        });
+      } catch {
+        // Symlink failed (cross-filesystem, permissions) — fall through
+      }
+    } else if (existsSync(join(sourceLegacyDir, 'specflow.db'))) {
+      try {
+        mkdirSync(dirname(legacyDbPath), { recursive: true });
+        symlinkSync(
+          join(sourceLegacyDir, 'specflow.db'),
+          legacyDbPath
+        );
+        dbLinked = true;
+        bb.appendEvent({
+          actorId: sessionId,
+          targetId: item.item_id,
+          summary: `Symlinked legacy specflow DB from source repo to worktree`,
+          metadata: { source: sourceLegacyDir, dest: legacyDbPath },
+        });
+      } catch {
+        // Symlink failed — fall through
+      }
     }
 
-    const initResult = await spawner(initArgs, worktreePath, 60_000);
-    if (initResult.exitCode !== 0) {
+    if (!dbLinked) {
+      // Fallback: run specflow init
+      // Try init strategies in order of preference:
+      // 1. --from-features (imports existing feature definitions)
+      // 2. --batch with --from-spec (non-interactive, uses app context)
+      // 3. --batch with project ID as description (minimal fallback)
+      const featuresPath = join(worktreePath, 'features.json');
+      const appContextPath = join(worktreePath, '.specify', 'app-context.md');
+
+      let initArgs: string[];
+      if (existsSync(featuresPath)) {
+        initArgs = ['init', '--from-features', featuresPath];
+      } else if (existsSync(appContextPath)) {
+        initArgs = ['init', '--batch', '--from-spec', appContextPath];
+      } else {
+        initArgs = ['init', '--batch', project.project_id];
+      }
+
+      const initResult = await spawner(initArgs, worktreePath, 60_000);
+      if (initResult.exitCode !== 0) {
+        bb.appendEvent({
+          actorId: sessionId,
+          targetId: item.item_id,
+          summary: `specflow init failed (exit ${initResult.exitCode}) in worktree`,
+          metadata: { stderr: initResult.stderr.slice(0, 500) },
+        });
+        return false;
+      }
       bb.appendEvent({
         actorId: sessionId,
         targetId: item.item_id,
-        summary: `specflow init failed (exit ${initResult.exitCode}) in worktree`,
-        metadata: { stderr: initResult.stderr.slice(0, 500) },
+        summary: `Initialized specflow database in worktree`,
+        metadata: { worktreePath },
       });
-      return false;
     }
-    bb.appendEvent({
-      actorId: sessionId,
-      targetId: item.item_id,
-      summary: `Initialized specflow database in worktree`,
-      metadata: { worktreePath },
-    });
   }
 
   // ─── Ensure feature exists in specflow DB ──────────────────────────
