@@ -6,7 +6,7 @@
  */
 
 import { join, dirname } from 'node:path';
-import { existsSync, readdirSync, mkdirSync, symlinkSync, lstatSync, cpSync } from 'node:fs';
+import { existsSync, readdirSync, mkdirSync, symlinkSync, lstatSync, cpSync, readFileSync, appendFileSync } from 'node:fs';
 import type { Blackboard } from '../blackboard.ts';
 import type { BlackboardWorkItem } from 'ivy-blackboard/src/types';
 import { getLauncher, logPathForSession } from './launcher.ts';
@@ -279,6 +279,22 @@ export async function runSpecFlowPhase(
         metadata: { worktreePath },
       });
     }
+  }
+
+  // ─── Ensure .specflow is gitignored ──────────────────────────────
+  // The .specflow symlink resolves to an absolute path containing the user's
+  // home directory, which triggers gitleaks pai-personal-path rule.
+  // Ensure .specflow/ is in .gitignore so agents don't accidentally stage it.
+  const worktreeGitignore = join(worktreePath, '.gitignore');
+  try {
+    const gitignoreContent = existsSync(worktreeGitignore)
+      ? readFileSync(worktreeGitignore, 'utf-8')
+      : '';
+    if (!gitignoreContent.includes('.specflow')) {
+      appendFileSync(worktreeGitignore, '\n# SpecFlow state (symlinked, contains absolute paths)\n.specflow/\n');
+    }
+  } catch {
+    // Non-fatal — gitleaks may still block but this is best-effort
   }
 
   // ─── Sync untracked spec artifacts to worktree ─────────────────────
