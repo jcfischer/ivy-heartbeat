@@ -77,6 +77,114 @@ export function parseTanaMeta(metadata: string | null): {
 }
 
 /**
+ * Parse stream-json stdout into structured parts.
+ * Stream-json format (from `claude --output-format stream-json`):
+ *   assistant: { message: { content: [{ type: 'text', text }, { type: 'tool_use', name, input }] } }
+ *   result:    { result: string }
+ */
+function parseStreamJson(stdout: string): {
+  textBlocks: string[];
+  toolUses: Array<{ name: string; input: Record<string, any> }>;
+  resultText: string;
+} {
+  const textBlocks: string[] = [];
+  const toolUses: Array<{ name: string; input: Record<string, any> }> = [];
+  let resultText = '';
+
+  if (!stdout) return { textBlocks, toolUses, resultText };
+
+  for (const line of stdout.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const msg = JSON.parse(line);
+      if (msg.type === 'assistant') {
+        for (const block of msg.message?.content ?? []) {
+          if (block.type === 'text' && block.text) {
+            textBlocks.push(block.text);
+          } else if (block.type === 'tool_use') {
+            toolUses.push({ name: block.name, input: block.input ?? {} });
+          }
+        }
+      } else if (msg.type === 'result' && msg.result) {
+        resultText = msg.result;
+      }
+    } catch {
+      // Not JSON — skip
+    }
+  }
+
+  return { textBlocks, toolUses, resultText };
+}
+
+/**
+ * Extract a concise spoken summary from the agent's output.
+ * Looks for the 🗣️ line first (the agent's own summary), then falls back
+ * to the result text, then to the tail of all text output.
+ */
+function extractAgentSummary(stdout: string, maxLen = 400): string {
+  const { textBlocks, resultText } = parseStreamJson(stdout);
+
+  // Priority 1: Find the 🗣️ spoken summary line
+  const allText = textBlocks.join('\n');
+  const voiceMatch = allText.match(/🗣️[^:]*:\s*(.+)/);
+  if (voiceMatch) return voiceMatch[1].trim().slice(0, maxLen);
+
+  // Priority 2: Use the result text
+  if (resultText) return resultText.slice(0, maxLen);
+
+  // Priority 3: Tail of all text
+  const trimmed = allText.trim();
+  if (!trimmed) return '';
+  if (trimmed.length <= maxLen) return trimmed;
+  return '...' + trimmed.slice(-maxLen);
+}
+
+/**
+ * Extract unique artifact file paths created or edited by the agent.
+ * Scans tool_use blocks for Write and Edit operations.
+ */
+function extractAgentArtifacts(stdout: string): string[] {
+  const { toolUses } = parseStreamJson(stdout);
+  const seen = new Set<string>();
+  const artifacts: string[] = [];
+
+  for (const tool of toolUses) {
+    if (tool.name === 'Write' || tool.name === 'Edit') {
+      const fp = tool.input.file_path;
+      if (fp && !seen.has(fp)) {
+        seen.add(fp);
+        artifacts.push(fp);
+      }
+    }
+  }
+
+  return artifacts;
+}
+
+/**
+ * Get a Hookmark URL for a file path. Falls back to file:// if Hookmark
+ * is unavailable or errors.
+ */
+async function getHookmarkUrl(filePath: string): Promise<string> {
+  try {
+    const fileName = filePath.split('/').pop() ?? filePath;
+    const proc = Bun.spawn(['osascript', '-e', `
+      tell application "Hookmark"
+        set theBookmark to make bookmark with properties {address:"file://${filePath}", name:"${fileName}"}
+        return address of theBookmark
+      end tell
+    `], { stdout: 'pipe', stderr: 'pipe' });
+    const stdout = await new Response(proc.stdout).text();
+    await proc.exited;
+    const hookUrl = stdout.trim();
+    if (hookUrl.startsWith('hook://')) return hookUrl;
+  } catch {
+    // Hookmark not available — fall back
+  }
+  return `file://${filePath}`;
+}
+
+/**
  * Cross-project dependency instructions injected into agent prompts.
  */
 const CROSS_PROJECT_DEPENDENCY_INSTRUCTIONS = `
@@ -593,7 +701,36 @@ export function registerDispatchWorkerCommand(
           if (tanaMeta.isTana && tanaMeta.nodeId) {
             try {
               const tanaAccessor = getTanaAccessor();
-              const resultContent = `- ✅ Ivy completed this task\n  - **Result:** Completed "${item.title}"\n  - **Completed:** ${new Date().toISOString()}`;
+              const summary = extractAgentSummary(result.stdout);
+              const artifacts = extractAgentArtifacts(result.stdout);
+              const logFile = logPathForSession(sessionId);
+
+              // Generate Hookmark URLs for log and artifacts
+              const logUrl = await getHookmarkUrl(logFile);
+              const artifactUrls: Array<{ name: string; url: string }> = [];
+              for (const fp of artifacts.slice(0, 10)) {
+                const url = await getHookmarkUrl(fp);
+                const name = fp.split('/').pop() ?? fp;
+                artifactUrls.push({ name, url });
+              }
+
+              const parts = ['- ✅ Ivy completed this task'];
+              if (summary) {
+                parts.push(`  - **Summary:** ${summary.slice(0, 400)}`);
+              }
+              // Agent Log with result summary as child, before documents
+              parts.push(`  - [Agent Log](${logUrl})`);
+              if (summary) {
+                parts.push(`    - ${summary.slice(0, 400)}`);
+              }
+              if (artifactUrls.length > 0) {
+                parts.push('  - **Documents:**');
+                for (const art of artifactUrls) {
+                  parts.push(`    - [${art.name}](${art.url})`);
+                }
+              }
+              parts.push(`  - **Completed:** ${new Date().toISOString()}`);
+              const resultContent = parts.join('\n');
               await tanaAccessor.addChildContent(tanaMeta.nodeId, resultContent);
               await tanaAccessor.checkNode(tanaMeta.nodeId);
               bb.appendEvent({
@@ -626,7 +763,9 @@ export function registerDispatchWorkerCommand(
           if (tanaMeta.isTana && tanaMeta.nodeId) {
             try {
               const tanaAccessor = getTanaAccessor();
-              const errorContent = `- ❌ Ivy encountered an error\n  - **Error:** Agent exited with code ${result.exitCode}\n  - **Attempted:** ${new Date().toISOString()}\n  - **Status:** Task left pending for retry or manual action`;
+              const errorLogFile = logPathForSession(sessionId);
+              const errorLogUrl = await getHookmarkUrl(errorLogFile);
+              const errorContent = `- ❌ Ivy encountered an error\n  - **Error:** Agent exited with code ${result.exitCode}\n  - [Error Log](${errorLogUrl})\n  - **Attempted:** ${new Date().toISOString()}\n  - **Status:** Task left pending for retry or manual action`;
               await tanaAccessor.addChildContent(tanaMeta.nodeId, errorContent);
               // Do NOT check off the node — leave it unchecked for retry
               bb.appendEvent({

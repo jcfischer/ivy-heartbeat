@@ -533,8 +533,41 @@ export async function dispatch(
                   metadata: { prNumber: pr.number, prUrl: pr.url, commitSha: sha },
                 });
 
+                // Create code review work item (non-fatal)
+                let reviewCreated = false;
+                const reviewItemId = `review-${item.project_id}-pr-${pr.number}`;
+                try {
+                  bb.createWorkItem({
+                    id: reviewItemId,
+                    title: `Code review: PR #${pr.number} - ${item.title}`,
+                    description: `AI code review for PR #${pr.number}\nBranch: ${branch}\nRepo: ${ghMeta.repo}`,
+                    project: item.project_id ?? undefined,
+                    source: 'code_review',
+                    sourceRef: pr.url,
+                    priority: 'P1',
+                    metadata: JSON.stringify({
+                      pr_number: pr.number,
+                      repo: ghMeta.repo,
+                      branch,
+                      implementation_work_item_id: item.item_id,
+                      review_status: null,
+                    }),
+                  });
+                  reviewCreated = true;
+
+                  bb.appendEvent({
+                    actorId: sessionId,
+                    targetId: item.item_id,
+                    summary: `Created code review work item ${reviewItemId} for PR #${pr.number}`,
+                    metadata: { reviewItemId, prNumber: pr.number },
+                  });
+                } catch {
+                  // Review item creation failed (non-fatal)
+                }
+
                 // Auto-merge for trusted contributors (non-fatal)
-                if (!ghMeta.humanReviewRequired) {
+                // Skip if code review was requested (review happens in next dispatch cycle)
+                if (!ghMeta.humanReviewRequired && !reviewCreated) {
                   try {
                     const merged = await mergePR(worktreePath, pr.number);
                     if (merged) {
