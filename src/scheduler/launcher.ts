@@ -225,7 +225,7 @@ async function defaultLauncher(opts: LaunchOptions): Promise<LaunchResult> {
     cwd: opts.workDir,
     stdout: 'pipe',
     stderr: 'pipe',
-    env: { ...process.env },
+    env: { ...process.env, CLAUDECODE: undefined },
   });
 
   // Set up timeout
