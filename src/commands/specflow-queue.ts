@@ -1,11 +1,61 @@
 import { Command } from 'commander';
+import { join } from 'node:path';
+import { existsSync, readdirSync } from 'node:fs';
 import type { CliContext } from '../cli.ts';
+import type { SpecFlowPhase } from '../scheduler/specflow-types.ts';
+
+/**
+ * Detect the correct starting phase based on existing artifacts on disk.
+ * Returns the first phase whose artifact does NOT yet exist.
+ */
+function detectStartPhase(
+  projectPath: string,
+  featureId: string
+): { phase: SpecFlowPhase; found: string[] } {
+  const specDir = join(projectPath, '.specify', 'specs');
+  const featureDir = findFeatureDir(specDir, featureId);
+
+  if (!featureDir) {
+    return { phase: 'specify', found: [] };
+  }
+
+  const found: string[] = [];
+
+  if (existsSync(join(featureDir, 'spec.md'))) found.push('spec.md');
+  if (existsSync(join(featureDir, 'plan.md'))) found.push('plan.md');
+  if (existsSync(join(featureDir, 'tasks.md'))) found.push('tasks.md');
+
+  if (found.length === 0) return { phase: 'specify', found };
+  if (!found.includes('spec.md')) return { phase: 'specify', found };
+  if (!found.includes('plan.md')) return { phase: 'plan', found };
+  if (!found.includes('tasks.md')) return { phase: 'tasks', found };
+  return { phase: 'implement', found };
+}
+
+/**
+ * Find feature directory by ID prefix (e.g., F-098 → F-098-context-assembler).
+ * Mirrors the logic in specflow-runner.ts.
+ */
+function findFeatureDir(specDir: string, featureId: string): string | null {
+  try {
+    const entries = readdirSync(specDir, { withFileTypes: true });
+    const prefix = featureId.toLowerCase();
+    for (const entry of entries) {
+      if (entry.isDirectory() && entry.name.toLowerCase().startsWith(prefix)) {
+        return join(specDir, entry.name);
+      }
+    }
+  } catch {
+    // specDir doesn't exist
+  }
+  return null;
+}
 
 /**
  * CLI command: ivy-heartbeat specflow-queue
  *
  * Manually queue a SpecFlow feature for dispatch.
- * Creates the initial "specify" work item on the blackboard.
+ * Auto-detects the starting phase from existing artifacts on disk.
  */
 export function registerSpecFlowQueueCommand(
   parent: Command,
@@ -115,19 +165,31 @@ export function registerSpecFlowQueueCommand(
         process.exit(1);
       }
 
+      // Detect starting phase from existing artifacts
+      const detected = project.local_path
+        ? detectStartPhase(project.local_path, opts.feature)
+        : { phase: 'specify' as SpecFlowPhase, found: [] as string[] };
+
+      const startPhase = detected.phase;
+
+      if (detected.found.length > 0) {
+        console.log(`Existing artifacts found: ${detected.found.join(', ')}`);
+        console.log(`Starting at phase: ${startPhase} (skipping completed phases)`);
+      }
+
       // Create work item
-      const itemId = `specflow-${opts.feature}-specify`;
+      const itemId = `specflow-${opts.feature}-${startPhase}`;
       const metadata = {
         specflow_feature_id: opts.feature,
-        specflow_phase: 'specify',
+        specflow_phase: startPhase,
         specflow_project_id: opts.project,
       };
 
       try {
         bb.createWorkItem({
           id: itemId,
-          title: `SpecFlow specify: ${opts.feature}`,
-          description: `SpecFlow feature "${opts.feature}" — starting with specify phase (batch mode)`,
+          title: `SpecFlow ${startPhase}: ${opts.feature}`,
+          description: `SpecFlow feature "${opts.feature}" — starting with ${startPhase} phase${detected.found.length > 0 ? ` (existing: ${detected.found.join(', ')})` : ' (batch mode)'}`,
           project: opts.project,
           source: 'specflow',
           sourceRef: opts.feature,
@@ -137,14 +199,14 @@ export function registerSpecFlowQueueCommand(
 
         bb.appendEvent({
           targetId: itemId,
-          summary: `Queued SpecFlow feature ${opts.feature} for dispatch (specify phase)`,
-          metadata: { featureId: opts.feature, projectId: opts.project },
+          summary: `Queued SpecFlow feature ${opts.feature} for dispatch (${startPhase} phase)`,
+          metadata: { featureId: opts.feature, projectId: opts.project, phase: startPhase, existingArtifacts: detected.found },
         });
 
         if (ctx.json) {
-          console.log(JSON.stringify({ itemId, feature: opts.feature, phase: 'specify' }));
+          console.log(JSON.stringify({ itemId, feature: opts.feature, phase: startPhase, existingArtifacts: detected.found }));
         } else {
-          console.log(`Queued: ${opts.feature} → specify phase (item: ${itemId})`);
+          console.log(`Queued: ${opts.feature} → ${startPhase} phase (item: ${itemId})`);
           console.log('The next dispatch cycle will pick it up.');
         }
       } catch (err: unknown) {
