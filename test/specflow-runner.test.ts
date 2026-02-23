@@ -20,6 +20,13 @@ import type { BlackboardWorkItem } from 'ivy-blackboard/src/types';
 let ctx: TestContext;
 let spawnerCalls: Array<{ args: string[]; cwd: string }>;
 
+/** Map phase names to their expected artifact filenames */
+const PHASE_ARTIFACT_FILES: Record<string, string> = {
+  specify: 'spec.md',
+  plan: 'plan.md',
+  tasks: 'tasks.md',
+};
+
 function mockSpawner(
   responses: Record<string, { exitCode: number; stdout: string; stderr: string }>
 ): SpecFlowSpawner {
@@ -30,7 +37,15 @@ function mockSpawner(
     if (key === 'init' && !responses[key]) {
       return { exitCode: 0, stdout: '', stderr: '' };
     }
-    return responses[key] ?? { exitCode: 0, stdout: '', stderr: '' };
+    const response = responses[key] ?? { exitCode: 0, stdout: '', stderr: '' };
+    // Simulate artifact creation on success (mirrors real specflow CLI behavior)
+    if (response.exitCode === 0 && PHASE_ARTIFACT_FILES[key]) {
+      const featureId = args[1] ?? 'F-001';
+      const specDir = `${cwd}/.specify/specs/${featureId}`;
+      mkdirSync(specDir, { recursive: true });
+      writeFileSync(`${specDir}/${PHASE_ARTIFACT_FILES[key]}`, `# ${key} artifact`);
+    }
+    return response;
   };
 }
 

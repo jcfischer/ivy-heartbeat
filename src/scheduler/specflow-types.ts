@@ -39,6 +39,13 @@ export const PHASE_ARTIFACTS: Partial<Record<SpecFlowPhase, string>> = {
   plan: 'plan.md',
 };
 
+/** Expected artifact per phase — used for post-phase existence validation */
+export const PHASE_EXPECTED_ARTIFACTS: Partial<Record<SpecFlowPhase, string>> = {
+  specify: 'spec.md',
+  plan: 'plan.md',
+  tasks: 'tasks.md',
+};
+
 /**
  * Parse and validate SpecFlow metadata from a work item's metadata JSON string.
  * Returns null if metadata is missing, invalid, or not a SpecFlow item.

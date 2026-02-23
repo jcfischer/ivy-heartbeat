@@ -17,6 +17,7 @@ import {
   nextPhase,
   PHASE_RUBRICS,
   PHASE_ARTIFACTS,
+  PHASE_EXPECTED_ARTIFACTS,
 } from './specflow-types.ts';
 import {
   createWorktree,
@@ -291,7 +292,7 @@ export async function runSpecFlowPhase(
       ? readFileSync(worktreeGitignore, 'utf-8')
       : '';
     if (!gitignoreContent.includes('.specflow')) {
-      appendFileSync(worktreeGitignore, '\n# SpecFlow state (symlinked, contains absolute paths)\n.specflow/\n');
+      appendFileSync(worktreeGitignore, '\n# SpecFlow state (symlinked, contains absolute paths)\n.specflow\n');
     }
   } catch {
     // Non-fatal — gitleaks may still block but this is best-effort
@@ -487,6 +488,28 @@ export async function runSpecFlowPhase(
     summary: `SpecFlow phase "${phase}" completed (exit 0) for ${featureId}`,
     metadata: { phase, featureId },
   });
+
+  // ─── Post-phase artifact existence check ──────────────────────────
+  // Guard against phases that exit 0 but don't produce expected artifacts
+  // (e.g., specflow tasks exits 0 with "already complete" but no tasks.md)
+  const expectedArtifact = PHASE_EXPECTED_ARTIFACTS[phase];
+  if (expectedArtifact) {
+    const specDir = join(worktreePath, '.specify', 'specs');
+    const featureDirForArtifact = findFeatureDir(specDir, featureId);
+    const artifactFile = featureDirForArtifact
+      ? join(featureDirForArtifact, expectedArtifact)
+      : join(specDir, featureId, expectedArtifact);
+
+    if (!existsSync(artifactFile)) {
+      bb.appendEvent({
+        actorId: sessionId,
+        targetId: item.item_id,
+        summary: `SpecFlow phase "${phase}" exited 0 but ${expectedArtifact} missing for ${featureId} — treating as failure`,
+        metadata: { phase, featureId, expectedArtifact, checkedPath: artifactFile },
+      });
+      return false;
+    }
+  }
 
   // ─── Implement: specflow outputs a prompt — launch Claude to execute it ──
   if (phase === 'implement' && result.stdout.trim()) {
