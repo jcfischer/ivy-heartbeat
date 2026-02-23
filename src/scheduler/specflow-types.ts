@@ -39,6 +39,14 @@ export const PHASE_ARTIFACTS: Partial<Record<SpecFlowPhase, string>> = {
   plan: 'plan.md',
 };
 
+/** Prerequisite phase — which phase must be completed before this one can run */
+export const PHASE_PREREQUISITES: Partial<Record<SpecFlowPhase, SpecFlowPhase>> = {
+  plan: 'specify',
+  tasks: 'plan',
+  implement: 'tasks',
+  complete: 'implement',
+};
+
 /** Expected artifact per phase — used for post-phase existence validation */
 export const PHASE_EXPECTED_ARTIFACTS: Partial<Record<SpecFlowPhase, string>> = {
   specify: 'spec.md',

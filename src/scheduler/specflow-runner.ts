@@ -18,6 +18,7 @@ import {
   PHASE_RUBRICS,
   PHASE_ARTIFACTS,
   PHASE_EXPECTED_ARTIFACTS,
+  PHASE_PREREQUISITES,
 } from './specflow-types.ts';
 import {
   createWorktree,
@@ -388,6 +389,43 @@ export async function runSpecFlowPhase(
           metadata: { stderr: addResult.stderr.slice(0, 500) },
         });
         return false;
+      }
+    }
+  }
+
+  // ─── Phase prerequisite check ───────────────────────────────────
+  // Verify the specflow DB has the feature at a phase that allows
+  // the requested phase to run. Prevents infinite retry loops when
+  // artifacts exist on disk but the DB hasn't been advanced.
+  const prerequisite = PHASE_PREREQUISITES[phase];
+  if (prerequisite) {
+    const statusResult = await spawner(['status', '--json'], worktreePath, 10_000);
+    if (statusResult.exitCode === 0) {
+      try {
+        const statusData = JSON.parse(statusResult.stdout);
+        const features = statusData.features ?? statusData;
+        const feature = (Array.isArray(features) ? features : []).find(
+          (f: { id?: string }) => f.id === featureId
+        );
+        const dbPhase = feature?.phase ?? 'none';
+        // Phase order for comparison
+        const phaseOrder: Record<string, number> = {
+          none: 0, specify: 1, plan: 2, tasks: 3, implement: 4, complete: 5,
+        };
+        const prereqOrder = phaseOrder[prerequisite] ?? 0;
+        const currentOrder = phaseOrder[dbPhase] ?? 0;
+        if (currentOrder < prereqOrder) {
+          bb.appendEvent({
+            actorId: sessionId,
+            targetId: item.item_id,
+            summary: `SpecFlow phase "${phase}" requires "${prerequisite}" but feature ${featureId} is at phase "${dbPhase}" — skipping (will not retry)`,
+            metadata: { phase, prerequisite, dbPhase, featureId },
+          });
+          // Return true to mark work item as completed (not available) — prevents infinite retry
+          return true;
+        }
+      } catch {
+        // JSON parse failed — proceed and let specflow CLI handle it
       }
     }
   }

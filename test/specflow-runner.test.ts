@@ -229,8 +229,8 @@ describe('specflow-runner', () => {
       expect(tasksCall).toBeDefined();
       expect(tasksCall!.args).toEqual(['tasks', 'F-001']);
 
-      // No eval call — tasks has no quality gate (only init + tasks)
-      expect(spawnerCalls.filter((c) => c.args[0] !== 'init')).toHaveLength(1);
+      // No eval call — tasks has no quality gate (only init + status + tasks)
+      expect(spawnerCalls.filter((c) => c.args[0] !== 'init' && c.args[0] !== 'status')).toHaveLength(1);
 
       // Should chain implement
       const items = ctx.bb.listWorkItems({ all: true });
