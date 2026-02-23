@@ -495,6 +495,15 @@ export async function evaluateGithubIssues(item: ChecklistItem): Promise<CheckRe
             metadata: JSON.stringify(workItemMetadata),
           });
 
+          // Re-assert evaluator-authoritative fields that the blackboard's
+          // defense-in-depth ingestion filter may have overwritten.
+          try {
+            bbAccessor.updateWorkItemMetadata(itemId, {
+              human_review_required: workItemMetadata.human_review_required,
+              filter_matches: workItemMetadata.filter_matches,
+            });
+          } catch { /* best effort — work item already created */ }
+
           totalNew++;
           newIssueDetails.push({
             project: project.project_id,
