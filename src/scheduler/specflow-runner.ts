@@ -28,6 +28,8 @@ import {
   pushBranch,
   createPR,
   getCurrentBranch,
+  isCleanBranch,
+  getDiffSummary,
 } from './worktree.ts';
 
 const MAX_RETRIES = 1;
@@ -94,6 +96,8 @@ export interface WorktreeOps {
   pushBranch: typeof pushBranch;
   createPR: typeof createPR;
   getCurrentBranch: typeof getCurrentBranch;
+  isCleanBranch: typeof isCleanBranch;
+  getDiffSummary: typeof getDiffSummary;
 }
 
 const defaultWorktreeOps: WorktreeOps = {
@@ -104,6 +108,8 @@ const defaultWorktreeOps: WorktreeOps = {
   pushBranch,
   createPR,
   getCurrentBranch,
+  isCleanBranch,
+  getDiffSummary,
 };
 
 let worktreeOps: WorktreeOps = defaultWorktreeOps;
@@ -551,17 +557,68 @@ export async function runSpecFlowPhase(
 
   // ─── Implement: specflow outputs a prompt — launch Claude to execute it ──
   if (phase === 'implement' && result.stdout.trim()) {
+    // Detect uncommitted changes from a previous failed attempt (GH-19)
+    let implementPrompt = result.stdout.trim();
+    const isClean = await worktreeOps.isCleanBranch(worktreePath);
+
+    if (!isClean) {
+      // Capture diff summary and prepend context so the agent can review existing work
+      let diffSummary = '';
+      try {
+        diffSummary = await worktreeOps.getDiffSummary(worktreePath, mainBranch);
+      } catch {
+        diffSummary = '(unable to generate diff summary)';
+      }
+
+      const priorWorkContext = [
+        '## IMPORTANT: Prior Implementation Work Detected',
+        '',
+        'A previous implementation attempt left uncommitted changes in this worktree.',
+        'Review the existing changes before writing new code.',
+        '',
+        '**Existing changes:**',
+        '```',
+        diffSummary,
+        '```',
+        '',
+        'Steps:',
+        '1. Review the existing uncommitted changes with `git diff`',
+        '2. Determine if they are correct and complete',
+        '3. Fix any issues found',
+        '4. Do NOT re-implement from scratch — build on the existing work',
+        '',
+        '---',
+        '',
+      ].join('\n');
+
+      implementPrompt = priorWorkContext + implementPrompt;
+
+      bb.appendEvent({
+        actorId: sessionId,
+        targetId: item.item_id,
+        summary: `Detected uncommitted changes from prior attempt for ${featureId} — augmenting prompt`,
+        metadata: { featureId, diffSummary: diffSummary.slice(0, 500) },
+      });
+    } else {
+      bb.appendEvent({
+        actorId: sessionId,
+        targetId: item.item_id,
+        summary: `Worktree is clean for ${featureId} — proceeding with fresh implementation`,
+        metadata: { featureId },
+      });
+    }
+
     bb.appendEvent({
       actorId: sessionId,
       targetId: item.item_id,
       summary: `Launching Claude to implement ${featureId}`,
-      metadata: { promptLength: result.stdout.length },
+      metadata: { promptLength: implementPrompt.length, hasExistingChanges: !isClean },
     });
 
     const launcher = getLauncher();
     const launchResult = await launcher({
       sessionId,
-      prompt: result.stdout.trim(),
+      prompt: implementPrompt,
       workDir: worktreePath,
       timeoutMs: SPECFLOW_TIMEOUT_MS,
     });

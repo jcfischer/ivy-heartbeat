@@ -108,6 +108,8 @@ beforeEach(() => {
     pushBranch: async () => {},
     createPR: async () => ({ number: 1, url: 'https://github.com/test/repo/pull/1' }),
     getCurrentBranch: async () => 'main',
+    isCleanBranch: async () => true,
+    getDiffSummary: async () => '',
   });
 });
 
@@ -613,6 +615,116 @@ describe('specflow-runner', () => {
 
       // Should fail — no artifact generation attempted
       expect(result).toBe(false);
+    });
+  });
+
+  describe('implement phase — uncommitted change detection', () => {
+    test('augments prompt with prior work context when worktree has uncommitted changes', async () => {
+      const meta = makeMeta({
+        specflow_phase: 'implement',
+        worktree_path: '/tmp/mock-worktree',
+        main_branch: 'main',
+      });
+      const item = makeWorkItem(meta);
+
+      const implementPrompt = 'Implement feature F-001 following the plan in plan.md';
+
+      // specflow implement returns the prompt on stdout
+      setSpecFlowSpawner(mockSpawner({
+        implement: { exitCode: 0, stdout: implementPrompt, stderr: '' },
+      }));
+
+      // Worktree has uncommitted changes from prior attempt
+      setWorktreeOps({
+        createWorktree: async (_proj, _branch, _id) => '/tmp/mock-worktree',
+        ensureWorktree: async (_proj, worktreePath, _branch) => {
+          mkdirSync(`${worktreePath}/.specflow`, { recursive: true });
+          writeFileSync(`${worktreePath}/.specflow/features.db`, '');
+          return worktreePath;
+        },
+        removeWorktree: async () => {},
+        commitAll: async () => 'abc123',
+        pushBranch: async () => {},
+        createPR: async () => ({ number: 1, url: 'https://github.com/test/repo/pull/1' }),
+        getCurrentBranch: async () => 'main',
+        isCleanBranch: async () => false, // <-- uncommitted changes exist
+        getDiffSummary: async () => ' src/foo.ts | 42 +++\n src/bar.ts | 15 +++\n 2 files changed, 57 insertions(+)',
+      });
+
+      // Capture what prompt the launcher receives
+      let launcherPrompt = '';
+      setLauncher(async (opts) => {
+        launcherPrompt = opts.prompt;
+        return { exitCode: 0, stdout: '', stderr: '' };
+      });
+
+      ctx.bb.registerAgent({ name: 'test', project: 'test-proj', work: item.item_id });
+
+      await runSpecFlowPhase(
+        ctx.bb,
+        item,
+        { project_id: 'test-proj', local_path: '/tmp/test-project' },
+        'test-session'
+      );
+
+      // Prompt should be augmented with prior work context
+      expect(launcherPrompt).toContain('Prior Implementation Work Detected');
+      expect(launcherPrompt).toContain('src/foo.ts');
+      expect(launcherPrompt).toContain('Do NOT re-implement from scratch');
+      // Original prompt should still be present
+      expect(launcherPrompt).toContain(implementPrompt);
+    });
+
+    test('does not augment prompt when worktree is clean', async () => {
+      const meta = makeMeta({
+        specflow_phase: 'implement',
+        worktree_path: '/tmp/mock-worktree',
+        main_branch: 'main',
+      });
+      const item = makeWorkItem(meta);
+
+      const implementPrompt = 'Implement feature F-001 following the plan in plan.md';
+
+      setSpecFlowSpawner(mockSpawner({
+        implement: { exitCode: 0, stdout: implementPrompt, stderr: '' },
+      }));
+
+      // Worktree is clean — no prior changes
+      setWorktreeOps({
+        createWorktree: async (_proj, _branch, _id) => '/tmp/mock-worktree',
+        ensureWorktree: async (_proj, worktreePath, _branch) => {
+          mkdirSync(`${worktreePath}/.specflow`, { recursive: true });
+          writeFileSync(`${worktreePath}/.specflow/features.db`, '');
+          return worktreePath;
+        },
+        removeWorktree: async () => {},
+        commitAll: async () => 'abc123',
+        pushBranch: async () => {},
+        createPR: async () => ({ number: 1, url: 'https://github.com/test/repo/pull/1' }),
+        getCurrentBranch: async () => 'main',
+        isCleanBranch: async () => true, // <-- clean
+        getDiffSummary: async () => '',
+      });
+
+      let launcherPrompt = '';
+      setLauncher(async (opts) => {
+        launcherPrompt = opts.prompt;
+        return { exitCode: 0, stdout: '', stderr: '' };
+      });
+
+      ctx.bb.registerAgent({ name: 'test', project: 'test-proj', work: item.item_id });
+
+      await runSpecFlowPhase(
+        ctx.bb,
+        item,
+        { project_id: 'test-proj', local_path: '/tmp/test-project' },
+        'test-session'
+      );
+
+      // Prompt should NOT contain prior work context
+      expect(launcherPrompt).not.toContain('Prior Implementation Work Detected');
+      // Original prompt should be passed through unchanged
+      expect(launcherPrompt).toBe(implementPrompt);
     });
   });
 
