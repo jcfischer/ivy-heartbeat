@@ -19,6 +19,7 @@ import {
 import { parseSpecFlowMeta } from '../scheduler/specflow-types.ts';
 import { runSpecFlowPhase } from '../scheduler/specflow-runner.ts';
 import { parseMergeFixMeta, createMergeFixWorkItem, runMergeFix } from '../scheduler/merge-fix.ts';
+import { parseReworkMeta, buildReworkPrompt } from '../scheduler/rework.ts';
 import { getTanaAccessor } from '../evaluators/tana-accessor.ts';
 
 /**
@@ -451,6 +452,146 @@ export function registerDispatchWorkerCommand(
           });
         } finally {
           try { await removeWorktree(project.local_path, mfWorktreePath); } catch { /* best effort */ }
+          try { bb.deregisterAgent(sessionId); } catch { /* best effort */ }
+        }
+        return;
+      }
+
+      // Determine if this is a rework work item (address review feedback)
+      const rwMeta = parseReworkMeta(item.metadata);
+      if (rwMeta && project) {
+        const rwBranch = rwMeta.branch;
+        const rwWorktreePath = resolveWorktreePath(project.local_path, rwBranch, rwMeta.project_id);
+        let rwDidStash = false;
+        try {
+          rwDidStash = await stashIfDirty(project.local_path);
+          const wtPath = await createWorktree(project.local_path, rwBranch, rwMeta.project_id);
+
+          bb.appendEvent({
+            actorId: sessionId,
+            targetId: itemId,
+            summary: `Rework: created worktree for branch ${rwBranch} at ${wtPath}`,
+          });
+
+          const prompt = buildReworkPrompt(rwMeta);
+          const result = await launcher({
+            workDir: wtPath,
+            prompt,
+            timeoutMs,
+            sessionId,
+            disableMcp: true,
+          });
+
+          if (result.exitCode === 0) {
+            // Commit and push the rework changes
+            const sha = await commitAll(
+              wtPath,
+              `Address review feedback for PR #${rwMeta.pr_number} (cycle ${rwMeta.rework_cycle})`
+            );
+
+            if (sha) {
+              await pushBranch(wtPath, rwBranch);
+              bb.appendEvent({
+                actorId: sessionId,
+                targetId: itemId,
+                summary: `Rework: pushed fixes for PR #${rwMeta.pr_number} (cycle ${rwMeta.rework_cycle})`,
+                metadata: { commitSha: sha, prNumber: rwMeta.pr_number },
+              });
+
+              // Create a new review work item to trigger re-review
+              const reviewItemId = `review-${rwMeta.project_id}-pr-${rwMeta.pr_number}`;
+              try {
+                bb.createWorkItem({
+                  id: reviewItemId,
+                  title: `Code review: PR #${rwMeta.pr_number} (post-rework cycle ${rwMeta.rework_cycle})`,
+                  description: `AI code review for PR #${rwMeta.pr_number} after rework cycle ${rwMeta.rework_cycle}\nBranch: ${rwBranch}\nRepo: ${rwMeta.repo}`,
+                  project: rwMeta.project_id,
+                  source: 'code_review',
+                  sourceRef: rwMeta.pr_url,
+                  priority: 'P1',
+                  metadata: JSON.stringify({
+                    pr_number: rwMeta.pr_number,
+                    pr_url: rwMeta.pr_url,
+                    repo: rwMeta.repo,
+                    branch: rwBranch,
+                    implementation_work_item_id: rwMeta.implementation_work_item_id,
+                    rework_cycle: rwMeta.rework_cycle,
+                    review_status: null,
+                  }),
+                });
+                bb.appendEvent({
+                  actorId: sessionId,
+                  targetId: itemId,
+                  summary: `Created re-review work item ${reviewItemId} for PR #${rwMeta.pr_number}`,
+                  metadata: { reviewItemId, reworkCycle: rwMeta.rework_cycle },
+                });
+              } catch {
+                // Review item may already exist — non-fatal
+              }
+            }
+
+            bb.completeWorkItem(itemId, sessionId);
+            bb.appendEvent({
+              actorId: sessionId,
+              targetId: itemId,
+              summary: `Rework completed for PR #${rwMeta.pr_number} (cycle ${rwMeta.rework_cycle})`,
+            });
+          } else {
+            try { bb.releaseWorkItem(itemId, sessionId); } catch { /* best effort */ }
+            bb.appendEvent({
+              actorId: sessionId,
+              targetId: itemId,
+              summary: `Rework agent failed for PR #${rwMeta.pr_number} (exit ${result.exitCode})`,
+              metadata: { exitCode: result.exitCode },
+            });
+          }
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          try { bb.releaseWorkItem(itemId, sessionId); } catch { /* best effort */ }
+          bb.appendEvent({
+            actorId: sessionId,
+            targetId: itemId,
+            summary: `Rework failed for PR #${rwMeta.pr_number}: ${msg}`,
+            metadata: { error: msg },
+          });
+        } finally {
+          try { await removeWorktree(project.local_path, rwWorktreePath); } catch { /* best effort */ }
+          if (rwDidStash) {
+            await popStash(project.local_path);
+          }
+          try { bb.deregisterAgent(sessionId); } catch { /* best effort */ }
+        }
+        return;
+      }
+
+      // Determine if this is a code_review work item (dispatch review agent)
+      const reviewMeta = item.metadata ? JSON.parse(item.metadata ?? '{}') : {};
+      if (item.source === 'code_review' && reviewMeta.pr_number && reviewMeta.repo) {
+        try {
+          const { dispatchReviewAgent } = await import('../scheduler/review-agent.ts');
+          const reviewResult = await dispatchReviewAgent(bb, item, {
+            prNumber: reviewMeta.pr_number,
+            repo: reviewMeta.repo,
+            branch: reviewMeta.branch ?? '',
+            projectPath: project?.local_path ?? resolvedWorkDir,
+          }, sessionId, timeoutMs);
+
+          bb.appendEvent({
+            actorId: sessionId,
+            targetId: itemId,
+            summary: `Code review dispatched for PR #${reviewMeta.pr_number}: ${reviewResult.reviewStatus}`,
+            metadata: { prNumber: reviewMeta.pr_number, reviewStatus: reviewResult.reviewStatus },
+          });
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          try { bb.releaseWorkItem(itemId, sessionId); } catch { /* best effort */ }
+          bb.appendEvent({
+            actorId: sessionId,
+            targetId: itemId,
+            summary: `Code review dispatch failed for PR #${reviewMeta.pr_number}: ${msg}`,
+            metadata: { error: msg },
+          });
+        } finally {
           try { bb.deregisterAgent(sessionId); } catch { /* best effort */ }
         }
         return;
