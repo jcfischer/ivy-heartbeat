@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { Blackboard } from '../blackboard.ts';
 import type { BlackboardWorkItem } from 'ivy-blackboard/src/types';
 import { getLauncher, logPathForSession } from './launcher.ts';
+import { createReworkWorkItem } from './rework.ts';
 
 interface ReviewContext {
   prNumber: number;
@@ -170,6 +171,23 @@ export async function dispatchReviewAgent(
     summary: `Code review ${review.status}: ${review.summary}`,
     metadata: { ...updatedMeta, eventType },
   });
+
+  // On changes_requested: create a rework work item so the feedback loop continues
+  if (review.status === 'changes_requested' && existingMeta.repo && existingMeta.branch) {
+    const currentCycle = (existingMeta.rework_cycle ?? 0) + 1;
+    createReworkWorkItem(bb, {
+      prNumber: existingMeta.pr_number ?? ctx.prNumber,
+      prUrl: existingMeta.pr_url ?? `https://github.com/${ctx.repo}/pull/${ctx.prNumber}`,
+      repo: existingMeta.repo ?? ctx.repo,
+      branch: existingMeta.branch ?? ctx.branch,
+      implementationWorkItemId: targetId,
+      reviewFeedback: review.summary,
+      reworkCycle: currentCycle,
+      projectId: item.project_id ?? '',
+      originalTitle: item.title.replace(/^Code review:\s*/i, ''),
+      sessionId,
+    });
+  }
 
   return {
     success: result.exitCode === 0,
