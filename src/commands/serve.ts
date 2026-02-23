@@ -20,8 +20,12 @@ export function registerServeCommand(
         console.log(`ivy-heartbeat dashboard running at http://localhost:${server.port}`);
         console.log('Press Ctrl+C to stop.');
 
-        // Keep process alive
+        // Keep process alive — Bun.serve() holds the event loop in dev mode,
+        // but compiled binaries exit after commander's action returns.
+        const keepAlive = setInterval(() => {}, 1 << 30);
+
         process.on('SIGINT', () => {
+          clearInterval(keepAlive);
           server.stop();
           ctx.bb.close();
           process.exit(0);

@@ -165,7 +165,7 @@ export async function evaluateGithubPrReview(item: ChecklistItem): Promise<Check
           bbAccessor.createWorkItem({
             id: `review-${project.project_id}-pr-${pr.number}`,
             title: `Code review: PR #${pr.number} - ${pr.title}`,
-            description: `AI code review for PR #${pr.number} in ${ownerRepo}\nBranch: ${pr.headRefName}\nURL: ${pr.url}`,
+            description: `Code review for PR #${pr.number} in ${ownerRepo}\nBranch: ${pr.headRefName}`,
             project: project.project_id,
             source: 'code_review',
             sourceRef: pr.url,
