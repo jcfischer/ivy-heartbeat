@@ -350,6 +350,17 @@ export async function evaluateGithubIssues(item: ChecklistItem): Promise<CheckRe
             );
           }
 
+          const sfMetadata = {
+            specflow_feature_id: featureId,
+            specflow_phase: 'specify',
+            specflow_project_id: project.project_id,
+            github_issue_number: issue.number,
+            github_issue_url: issue.url,
+            github_repo: ownerRepo,
+            content_filtered: true,
+            content_blocked: contentBlocked,
+          };
+
           try {
             bbAccessor.createWorkItem({
               id: sfItemId,
@@ -359,16 +370,7 @@ export async function evaluateGithubIssues(item: ChecklistItem): Promise<CheckRe
               source: 'specflow',
               sourceRef: issue.url,
               priority: 'P2',
-              metadata: JSON.stringify({
-                specflow_feature_id: featureId,
-                specflow_phase: 'specify',
-                specflow_project_id: project.project_id,
-                github_issue_number: issue.number,
-                github_issue_url: issue.url,
-                github_repo: ownerRepo,
-                content_filtered: true,
-                content_blocked: contentBlocked,
-              }),
+              metadata: JSON.stringify(sfMetadata),
             });
 
             totalNew++;
@@ -377,23 +379,54 @@ export async function evaluateGithubIssues(item: ChecklistItem): Promise<CheckRe
               issue: `#${issue.number}: ${issue.title} (→ SpecFlow)`,
               url: issue.url,
             });
-          } catch {
-            // Work item already exists — backfill metadata if missing
-            try {
-              const existing = existingItems.find((i) => i.source_ref === issue.url);
-              if (existing && !existing.metadata) {
-                bbAccessor.updateWorkItemMetadata(sfItemId, {
-                  specflow_feature_id: featureId,
-                  specflow_phase: 'specify',
-                  specflow_project_id: project.project_id,
-                  github_issue_number: issue.number,
-                  github_issue_url: issue.url,
-                  github_repo: ownerRepo,
-                  content_filtered: true,
-                  content_blocked: contentBlocked,
+          } catch (sfErr: unknown) {
+            const sfErrMsg = sfErr instanceof Error ? sfErr.message : String(sfErr);
+
+            if (sfErrMsg.includes('Content blocked') || sfErrMsg.includes('CONTENT_BLOCKED')) {
+              const strippedSfDesc = [
+                `GitHub Issue #${issue.number}: ${issue.title}`,
+                `Repository: ${ownerRepo}`,
+                `Opened by: ${issue.author.login}`,
+                labelStr ? `Labels: ${labelStr}` : '',
+                `URL: ${issue.url}`,
+                '',
+                '## ⚠ Body Omitted',
+                'Issue body was blocked by blackboard ingestion filter.',
+                'Read the full issue on GitHub.',
+              ].filter(Boolean).join('\n');
+
+              try {
+                bbAccessor.createWorkItem({
+                  id: sfItemId,
+                  title: `SpecFlow specify: ${featureId}`,
+                  description: strippedSfDesc,
+                  project: project.project_id,
+                  source: 'specflow',
+                  sourceRef: issue.url,
+                  priority: 'P2',
+                  metadata: JSON.stringify({
+                    ...sfMetadata,
+                    human_review_required: true,
+                    body_stripped_by_ingestion_filter: true,
+                  }),
                 });
-              }
-            } catch { /* best effort metadata backfill */ }
+
+                totalNew++;
+                newIssueDetails.push({
+                  project: project.project_id,
+                  issue: `#${issue.number}: ${issue.title} (→ SpecFlow, body stripped)`,
+                  url: issue.url,
+                });
+              } catch { /* truly duplicate or other unrecoverable error */ }
+            } else {
+              // Work item already exists — backfill metadata if missing
+              try {
+                const existing = existingItems.find((i) => i.source_ref === issue.url);
+                if (existing && !existing.metadata) {
+                  bbAccessor.updateWorkItemMetadata(sfItemId, sfMetadata);
+                }
+              } catch { /* best effort metadata backfill */ }
+            }
           }
           continue;
         }
@@ -437,6 +470,19 @@ export async function evaluateGithubIssues(item: ChecklistItem): Promise<CheckRe
 
         const description = descriptionParts.filter(Boolean).join('\n');
 
+        const workItemMetadata = {
+          github_issue_number: issue.number,
+          github_repo: ownerRepo,
+          author: issue.author.login,
+          labels: issue.labels.map((l) => l.name),
+          workflow: isOwner ? 'investigate-branch-implement-test-commit-push-comment' : 'acknowledge-investigate-branch-implement-test-commit-push-comment',
+          human_review_required: !isOwner,
+          content_filtered: true,
+          content_blocked: contentBlocked,
+          content_warning: contentWarning,
+          filter_matches: filterResult.matches.map((m) => m.pattern_id),
+        };
+
         try {
           bbAccessor.createWorkItem({
             id: itemId,
@@ -446,18 +492,7 @@ export async function evaluateGithubIssues(item: ChecklistItem): Promise<CheckRe
             source: 'github',
             sourceRef: issue.url,
             priority: isOwner ? 'P1' : 'P2',
-            metadata: JSON.stringify({
-              github_issue_number: issue.number,
-              github_repo: ownerRepo,
-              author: issue.author.login,
-              labels: issue.labels.map((l) => l.name),
-              workflow: isOwner ? 'investigate-branch-implement-test-commit-push-comment' : 'acknowledge-investigate-branch-implement-test-commit-push-comment',
-              human_review_required: !isOwner,
-              content_filtered: true,
-              content_blocked: contentBlocked,
-              content_warning: contentWarning,
-              filter_matches: filterResult.matches.map((m) => m.pattern_id),
-            }),
+            metadata: JSON.stringify(workItemMetadata),
           });
 
           totalNew++;
@@ -466,25 +501,57 @@ export async function evaluateGithubIssues(item: ChecklistItem): Promise<CheckRe
             issue: `#${issue.number}: ${issue.title}`,
             url: issue.url,
           });
-        } catch {
-          // Work item already exists — backfill metadata if missing
-          try {
-            const existing = existingItems.find((i) => i.source_ref === issue.url);
-            if (existing && !existing.metadata) {
-              bbAccessor.updateWorkItemMetadata(itemId, {
-                github_issue_number: issue.number,
-                github_repo: ownerRepo,
-                author: issue.author.login,
-                labels: issue.labels.map((l) => l.name),
-                workflow: isOwner ? 'investigate-branch-implement-test-commit-push-comment' : 'acknowledge-investigate-branch-implement-test-commit-push-comment',
-                human_review_required: !isOwner,
-                content_filtered: true,
-                content_blocked: contentBlocked,
-                content_warning: contentWarning,
-                filter_matches: filterResult.matches.map((m) => m.pattern_id),
+        } catch (createErr: unknown) {
+          const errMsg = createErr instanceof Error ? createErr.message : String(createErr);
+
+          // Blackboard's defense-in-depth content filter blocked the issue body.
+          // Retry with a stripped description (metadata only, no body) so the work
+          // item is still tracked. The operator can read the full body on GitHub.
+          if (errMsg.includes('Content blocked') || errMsg.includes('CONTENT_BLOCKED')) {
+            const strippedDesc = [
+              `GitHub Issue #${issue.number}: ${issue.title}`,
+              `Repository: ${ownerRepo}`,
+              `Opened by: ${issue.author.login}${isOwner ? ' (owner — autonomous execution)' : ''}`,
+              labelStr ? `Labels: ${labelStr}` : '',
+              `URL: ${issue.url}`,
+              '',
+              '## ⚠ Body Omitted',
+              'Issue body was blocked by blackboard ingestion filter.',
+              'Read the full issue on GitHub.',
+            ].filter(Boolean).join('\n');
+
+            try {
+              bbAccessor.createWorkItem({
+                id: itemId,
+                title: `Issue #${issue.number}: ${issue.title}`,
+                description: strippedDesc,
+                project: project.project_id,
+                source: 'github',
+                sourceRef: issue.url,
+                priority: isOwner ? 'P1' : 'P2',
+                metadata: JSON.stringify({
+                  ...workItemMetadata,
+                  human_review_required: true,
+                  body_stripped_by_ingestion_filter: true,
+                }),
               });
-            }
-          } catch { /* best effort metadata backfill */ }
+
+              totalNew++;
+              newIssueDetails.push({
+                project: project.project_id,
+                issue: `#${issue.number}: ${issue.title} (body stripped)`,
+                url: issue.url,
+              });
+            } catch { /* truly duplicate or other unrecoverable error */ }
+          } else {
+            // Work item already exists — backfill metadata if missing
+            try {
+              const existing = existingItems.find((i) => i.source_ref === issue.url);
+              if (existing && !existing.metadata) {
+                bbAccessor.updateWorkItemMetadata(itemId, workItemMetadata);
+              }
+            } catch { /* best effort metadata backfill */ }
+          }
         }
       }
     }
