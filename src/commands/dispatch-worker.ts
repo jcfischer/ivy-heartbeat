@@ -13,6 +13,7 @@ import {
   createPR,
   mergePR,
   pullMain,
+  getPRState,
   getDiffSummary,
   buildCommentPrompt,
 } from '../scheduler/worktree.ts';
@@ -681,7 +682,51 @@ export function registerDispatchWorkerCommand(
                         });
                       }
                     } else {
-                      // Create recovery work item for merge failure
+                      // Check if PR was merged by another path before creating recovery item
+                      const currentState = await getPRState(worktreePath, pr.number);
+                      if (currentState === 'MERGED') {
+                        try { await pullMain(project.local_path, mainBranch!); } catch { /* non-fatal */ }
+                        bb.appendEvent({
+                          actorId: sessionId,
+                          targetId: itemId,
+                          summary: `PR #${pr.number} already merged — skipping merge-fix`,
+                          metadata: { prNumber: pr.number, prState: 'MERGED' },
+                        });
+                      } else {
+                        // Create recovery work item for merge failure
+                        const mergeFixId = createMergeFixWorkItem(bb, {
+                          originalItemId: itemId,
+                          prNumber: pr.number,
+                          prUrl: pr.url,
+                          branch: branch!,
+                          mainBranch: mainBranch!,
+                          issueNumber: ghMeta.issueNumber,
+                          projectId: item.project_id!,
+                          originalTitle: item.title,
+                          sessionId,
+                        });
+                        bb.appendEvent({
+                          actorId: sessionId,
+                          targetId: itemId,
+                          summary: `Auto-merge failed for PR #${pr.number} — created recovery item ${mergeFixId}`,
+                          metadata: { prNumber: pr.number, autoMerge: false, mergeFixItemId: mergeFixId },
+                        });
+                      }
+                    }
+                  } catch (mergeErr: unknown) {
+                    const mergeMsg = mergeErr instanceof Error ? mergeErr.message : String(mergeErr);
+                    // Check if PR was merged despite the error before creating recovery item
+                    const errState = await getPRState(worktreePath, pr.number);
+                    if (errState === 'MERGED') {
+                      try { await pullMain(project.local_path, mainBranch!); } catch { /* non-fatal */ }
+                      bb.appendEvent({
+                        actorId: sessionId,
+                        targetId: itemId,
+                        summary: `PR #${pr.number} already merged — skipping merge-fix (error was: ${mergeMsg})`,
+                        metadata: { prNumber: pr.number, prState: 'MERGED', error: mergeMsg },
+                      });
+                    } else {
+                      // Create recovery work item for merge error
                       const mergeFixId = createMergeFixWorkItem(bb, {
                         originalItemId: itemId,
                         prNumber: pr.number,
@@ -696,30 +741,10 @@ export function registerDispatchWorkerCommand(
                       bb.appendEvent({
                         actorId: sessionId,
                         targetId: itemId,
-                        summary: `Auto-merge failed for PR #${pr.number} — created recovery item ${mergeFixId}`,
-                        metadata: { prNumber: pr.number, autoMerge: false, mergeFixItemId: mergeFixId },
+                        summary: `Auto-merge error for PR #${pr.number}: ${mergeMsg} — created recovery item ${mergeFixId}`,
+                        metadata: { prNumber: pr.number, error: mergeMsg, mergeFixItemId: mergeFixId },
                       });
                     }
-                  } catch (mergeErr: unknown) {
-                    const mergeMsg = mergeErr instanceof Error ? mergeErr.message : String(mergeErr);
-                    // Create recovery work item for merge error
-                    const mergeFixId = createMergeFixWorkItem(bb, {
-                      originalItemId: itemId,
-                      prNumber: pr.number,
-                      prUrl: pr.url,
-                      branch: branch!,
-                      mainBranch: mainBranch!,
-                      issueNumber: ghMeta.issueNumber,
-                      projectId: item.project_id!,
-                      originalTitle: item.title,
-                      sessionId,
-                    });
-                    bb.appendEvent({
-                      actorId: sessionId,
-                      targetId: itemId,
-                      summary: `Auto-merge error for PR #${pr.number}: ${mergeMsg} — created recovery item ${mergeFixId}`,
-                      metadata: { prNumber: pr.number, error: mergeMsg, mergeFixItemId: mergeFixId },
-                    });
                   }
                 }
 

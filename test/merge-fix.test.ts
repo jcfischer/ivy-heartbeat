@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { createTestContext, cleanupTestContext, type TestContext } from './helpers.ts';
 import {
   parseMergeFixMeta,
@@ -176,5 +176,57 @@ describe('createMergeFixWorkItem', () => {
     expect(mergeFixItem!.description).toContain('fix/issue-5');
     expect(mergeFixItem!.description).toContain('main');
     expect(mergeFixItem!.description).toContain('Add feature X');
+  });
+});
+
+describe('runMergeFix — already merged PR', () => {
+  const baseMeta: MergeFixMetadata = {
+    merge_fix: true,
+    pr_number: 42,
+    pr_url: 'https://github.com/owner/repo/pull/42',
+    branch: 'fix/issue-10',
+    main_branch: 'main',
+    original_item_id: 'gh-repo-10',
+    original_issue_number: 10,
+    project_id: 'proj-a',
+  };
+
+  test('exits early and logs event when PR is already merged', async () => {
+    // Use mock.module to intercept worktree imports
+    const mockGetPRState = mock(() => Promise.resolve('MERGED' as const));
+    const mockPullMain = mock(() => Promise.resolve());
+    mock.module('../src/scheduler/worktree.ts', () => {
+      const actual = require('../src/scheduler/worktree.ts');
+      return {
+        ...actual,
+        getPRState: mockGetPRState,
+        pullMain: mockPullMain,
+      };
+    });
+
+    // Re-import to pick up mocks
+    const { runMergeFix } = await import('../src/scheduler/merge-fix.ts');
+
+    registerProject(ctx.bb.db, { id: 'proj-a', name: 'Project A', path: '/tmp/proj-a' });
+    createWorkItem(ctx.bb.db, {
+      id: 'merge-fix-gh-repo-10-42',
+      title: 'Fix merge conflict: PR #42 for #10',
+      project: 'proj-a',
+    });
+    const item = ctx.bb.listWorkItems()[0];
+
+    await runMergeFix(
+      ctx.bb, item, baseMeta,
+      { id: 'proj-a', name: 'Project A', local_path: '/tmp/proj-a' } as any,
+      'session-1',
+      async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+      60000,
+    );
+
+    const events = ctx.bb.eventQueries.getRecent(10);
+    const skipEvent = events.find((e: any) => e.summary.includes('already merged'));
+    expect(skipEvent).toBeDefined();
+    expect(skipEvent!.summary).toContain('PR #42 already merged');
+    expect(skipEvent!.summary).toContain('skipping merge-fix');
   });
 });

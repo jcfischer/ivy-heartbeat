@@ -10,6 +10,7 @@ import {
   pushBranch,
   mergePR,
   pullMain,
+  getPRState,
 } from './worktree.ts';
 
 /**
@@ -137,6 +138,21 @@ export async function runMergeFix(
   launcher: SessionLauncher,
   timeoutMs: number
 ): Promise<void> {
+  // Early exit: if the PR is already merged, no recovery needed
+  const prState = await getPRState(project.local_path, meta.pr_number);
+  if (prState === 'MERGED') {
+    try {
+      await pullMain(project.local_path, meta.main_branch);
+    } catch { /* non-fatal */ }
+    bb.appendEvent({
+      actorId: sessionId,
+      targetId: item.item_id,
+      summary: `PR #${meta.pr_number} already merged — skipping merge-fix`,
+      metadata: { prNumber: meta.pr_number, prState: 'MERGED' },
+    });
+    return;
+  }
+
   const expectedPath = resolveWorktreePath(project.local_path, meta.branch, meta.project_id);
   const worktreePath = await ensureWorktree(project.local_path, expectedPath, meta.branch);
 

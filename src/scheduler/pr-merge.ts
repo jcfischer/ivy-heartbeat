@@ -1,6 +1,6 @@
 import type { Blackboard } from '../blackboard.ts';
 import type { BlackboardProject, BlackboardWorkItem } from 'ivy-blackboard/src/types';
-import { mergePR, pullMain } from './worktree.ts';
+import { mergePR, pullMain, getPRState } from './worktree.ts';
 import { createMergeFixWorkItem } from './merge-fix.ts';
 
 /**
@@ -152,7 +152,22 @@ export async function runPRMerge(
     return;
   }
 
-  // Merge failed — create merge-fix recovery item
+  // Check if the PR was actually merged despite the gh merge command failing
+  const prState = await getPRState(project.local_path, meta.pr_number);
+  if (prState === 'MERGED') {
+    try {
+      await pullMain(project.local_path, meta.main_branch);
+    } catch { /* non-fatal */ }
+    bb.appendEvent({
+      actorId: sessionId,
+      targetId: item.item_id,
+      summary: `PR #${meta.pr_number} already merged — skipping merge-fix`,
+      metadata: { prNumber: meta.pr_number, prState: 'MERGED' },
+    });
+    return;
+  }
+
+  // Merge genuinely failed — create merge-fix recovery item
   const mergeFixId = createMergeFixWorkItem(bb, {
     originalItemId: meta.implementation_work_item_id,
     prNumber: meta.pr_number,
