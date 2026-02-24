@@ -12,6 +12,7 @@ import type { BlackboardWorkItem } from 'ivy-blackboard/src/types';
 import { getLauncher, logPathForSession } from './launcher.ts';
 import {
   type SpecFlowPhase,
+  type SpecFlowPhaseResult,
   type SpecFlowWorkItemMetadata,
   parseSpecFlowMeta,
   nextPhase,
@@ -140,7 +141,7 @@ export async function runSpecFlowPhase(
   item: BlackboardWorkItem,
   project: { project_id: string; local_path: string },
   sessionId: string
-): Promise<boolean> {
+): Promise<SpecFlowPhaseResult> {
   const meta = parseSpecFlowMeta(item.metadata);
   if (!meta) {
     throw new Error('Work item has no valid SpecFlow metadata');
@@ -188,6 +189,22 @@ export async function runSpecFlowPhase(
     summary: `Worktree ready at ${worktreePath}`,
     metadata: { worktreePath, phase },
   });
+
+  // ─── Reset worktree state on retry (clean slate for new attempt) ───
+  if (meta.retry_count && meta.retry_count > 0 && phase === 'implement') {
+    try {
+      const { execSync } = await import('node:child_process');
+      execSync('git checkout -- .', { cwd: worktreePath, timeout: 10_000 });
+      bb.appendEvent({
+        actorId: sessionId,
+        targetId: item.item_id,
+        summary: `Reset worktree state for retry attempt ${meta.retry_count}`,
+        metadata: { retryCount: meta.retry_count },
+      });
+    } catch {
+      // Non-fatal — implement phase already handles dirty worktrees
+    }
+  }
 
   // ─── Ensure specflow is initialized in the worktree ─────────────
   const specflowDbPath = join(worktreePath, '.specflow', 'features.db');
@@ -279,7 +296,7 @@ export async function runSpecFlowPhase(
           summary: `specflow init failed (exit ${initResult.exitCode}) in worktree`,
           metadata: { stderr: initResult.stderr.slice(0, 500) },
         });
-        return false;
+        return { status: 'failed' };
       }
       bb.appendEvent({
         actorId: sessionId,
@@ -395,7 +412,7 @@ export async function runSpecFlowPhase(
           summary: `Failed to register feature ${featureId} in specflow (exit ${addResult.exitCode})`,
           metadata: { stderr: addResult.stderr.slice(0, 500) },
         });
-        return false;
+        return { status: 'failed' };
       }
     }
   }
@@ -425,11 +442,12 @@ export async function runSpecFlowPhase(
           bb.appendEvent({
             actorId: sessionId,
             targetId: item.item_id,
-            summary: `SpecFlow phase "${phase}" requires "${prerequisite}" but feature ${featureId} is at phase "${dbPhase}" — skipping (will not retry)`,
+            summary: `SpecFlow phase "${phase}" requires "${prerequisite}" but feature ${featureId} is at phase "${dbPhase}" — releasing for later retry`,
             metadata: { phase, prerequisite, dbPhase, featureId },
           });
-          // Return true to mark work item as completed (not available) — prevents infinite retry
-          return true;
+          // Return blocked — the prerequisite phase must complete first.
+          // The item will be re-dispatched once the prerequisite phase advances the DB.
+          return { status: 'blocked' };
         }
       } catch {
         // JSON parse failed — proceed and let specflow CLI handle it
@@ -451,7 +469,7 @@ export async function runSpecFlowPhase(
       summary: `SpecFlow phase "${phase}" timed out for ${featureId}`,
       metadata: { phase, featureId, timeout: SPECFLOW_TIMEOUT_MS },
     });
-    return false;
+    return { status: 'failed' };
   }
 
   if (result.exitCode !== 0) {
@@ -495,7 +513,7 @@ export async function runSpecFlowPhase(
               summary: `SpecFlow complete still failed after artifact generation (exit ${retryResult.exitCode})`,
               metadata: { phase, exitCode: retryResult.exitCode, stderr: retryResult.stderr.slice(0, 500) },
             });
-            return false;
+            return { status: 'failed' };
           }
         } else {
           bb.appendEvent({
@@ -504,7 +522,7 @@ export async function runSpecFlowPhase(
             summary: `Failed to generate missing artifacts for ${featureId} — aborting complete`,
             metadata: { phase, missingArtifacts },
           });
-          return false;
+          return { status: 'failed' };
         }
       } else {
         // Complete failed for a non-artifact reason
@@ -514,7 +532,7 @@ export async function runSpecFlowPhase(
           summary: `SpecFlow phase "${phase}" failed (exit ${result.exitCode}) for ${featureId}`,
           metadata: { phase, exitCode: result.exitCode, stderr: result.stderr.slice(0, 500) },
         });
-        return false;
+        return { status: 'failed' };
       }
     } else {
       bb.appendEvent({
@@ -523,7 +541,7 @@ export async function runSpecFlowPhase(
         summary: `SpecFlow phase "${phase}" failed (exit ${result.exitCode}) for ${featureId}`,
         metadata: { phase, exitCode: result.exitCode, stderr: result.stderr.slice(0, 500) },
       });
-      return false;
+      return { status: 'failed' };
     }
   }
 
@@ -552,7 +570,42 @@ export async function runSpecFlowPhase(
         summary: `SpecFlow phase "${phase}" exited 0 but ${expectedArtifact} missing for ${featureId} — treating as failure`,
         metadata: { phase, featureId, expectedArtifact, checkedPath: artifactFile },
       });
-      return false;
+      return { status: 'failed' };
+    }
+
+    // ─── Sync artifacts back from worktree to source repo ──────────────
+    // Prevents orphaned work products when post-processing fails (content
+    // filter, quality gate error, crash). The source repo always has the
+    // latest artifacts regardless of pipeline outcome.
+    const featureDirInWorktree = featureDirForArtifact ?? join(specDir, featureId);
+    const specDirs = ['.specify/specs', '.specflow/specs'];
+    for (const specBase of specDirs) {
+      const sourceSpecDir = join(project.local_path, specBase);
+      if (!existsSync(sourceSpecDir)) continue;
+
+      try {
+        const entries = readdirSync(sourceSpecDir, { withFileTypes: true });
+        const prefix = featureId.toLowerCase();
+        for (const entry of entries) {
+          if (!entry.isDirectory() || !entry.name.toLowerCase().startsWith(prefix)) continue;
+          const sourceFeatureDir = join(sourceSpecDir, entry.name);
+          // Copy all artifacts from worktree feature dir to source
+          for (const file of readdirSync(featureDirInWorktree)) {
+            const src = join(featureDirInWorktree, file);
+            const dest = join(sourceFeatureDir, file);
+            cpSync(src, dest, { recursive: true });
+          }
+          bb.appendEvent({
+            actorId: sessionId,
+            targetId: item.item_id,
+            summary: `Synced artifacts from worktree back to source for ${featureId}`,
+            metadata: { sourceDir: sourceFeatureDir, phase },
+          });
+          break;
+        }
+      } catch {
+        // Non-fatal — artifact exists in worktree, will be available on next run
+      }
     }
   }
 
@@ -631,7 +684,7 @@ export async function runSpecFlowPhase(
         summary: `Implementation agent failed (exit ${launchResult.exitCode}) for ${featureId}`,
         metadata: { exitCode: launchResult.exitCode },
       });
-      return false;
+      return { status: 'failed' };
     }
 
     bb.appendEvent({
@@ -659,8 +712,8 @@ export async function runSpecFlowPhase(
           summary: `Quality gate failed (${gateResult.score}%) — retrying ${featureId} phase "${phase}" (attempt ${retryCount + 1}/${MAX_RETRIES})`,
           metadata: { phase, score: gateResult.score, retryCount: retryCount + 1 },
         });
-        // Return true: retry supersedes original item — caller should complete it
-        return true;
+        // Retry: caller should complete original item, retry item supersedes
+        return { status: 'retry' };
       } else {
         bb.appendEvent({
           actorId: sessionId,
@@ -668,8 +721,8 @@ export async function runSpecFlowPhase(
           summary: `Quality gate failed (${gateResult.score}%) — max retries exceeded for ${featureId} phase "${phase}"`,
           metadata: { phase, score: gateResult.score, maxRetries: MAX_RETRIES },
         });
-        // Return true: pipeline exhausted — complete item, don't release for infinite re-dispatch
-        return true;
+        // Pipeline exhausted — mark as failed so it's not silently "completed"
+        return { status: 'failed' };
       }
     }
 
@@ -700,7 +753,7 @@ export async function runSpecFlowPhase(
     } catch {
       // Non-fatal — staleness cleanup will handle it
     }
-    return true;
+    return { status: 'completed' };
   }
 
   // ─── Chain next phase ────────────────────────────────────────────
@@ -715,7 +768,7 @@ export async function runSpecFlowPhase(
     });
   }
 
-  return true;
+  return { status: 'completed', nextPhase: next ?? undefined };
 }
 
 // ─── CLI argument builder ──────────────────────────────────────────────

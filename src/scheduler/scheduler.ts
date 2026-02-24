@@ -126,6 +126,51 @@ function buildPrompt(item: BlackboardWorkItem, sessionId: string): string {
   return parts.join('\n');
 }
 
+/** Default timeout for stale claim release (30 minutes) */
+const STALE_CLAIM_TIMEOUT_MS = 30 * 60 * 1000;
+
+/**
+ * Release work items that were claimed by an agent that hasn't sent a
+ * heartbeat within the timeout period. Prevents items from being stuck
+ * in 'claimed' status when the agent process dies unexpectedly.
+ */
+function releaseStaleItems(bb: Blackboard): number {
+  const claimed = bb.listWorkItems({ status: 'claimed' });
+  let released = 0;
+
+  for (const item of claimed) {
+    if (!item.claimed_by) continue;
+
+    // Check the agent's last heartbeat
+    const heartbeats = bb.heartbeatQueries.getBySession(item.claimed_by);
+    const lastHeartbeat = heartbeats[0]; // Most recent first (DESC order)
+
+    // Use heartbeat timestamp, or fall back to claimed_at
+    const lastActivityStr = lastHeartbeat?.timestamp ?? item.claimed_at;
+    if (!lastActivityStr) continue;
+
+    const lastActivity = new Date(lastActivityStr).getTime();
+    const elapsed = Date.now() - lastActivity;
+
+    if (elapsed > STALE_CLAIM_TIMEOUT_MS) {
+      try {
+        bb.releaseWorkItem(item.item_id, item.claimed_by);
+        bb.appendEvent({
+          actorId: 'scheduler',
+          targetId: item.item_id,
+          summary: `Auto-released stale claimed item (no heartbeat for ${Math.round(elapsed / 60_000)}min)`,
+          metadata: { claimedBy: item.claimed_by, elapsedMs: elapsed },
+        });
+        released++;
+      } catch {
+        // Best effort — item may have been released concurrently
+      }
+    }
+  }
+
+  return released;
+}
+
 /**
  * Dispatch available work items to Claude Code sessions.
  *
@@ -151,6 +196,11 @@ export async function dispatch(
     errors: [],
     dryRun: opts.dryRun,
   };
+
+  // Release stale claimed items before querying for available work
+  if (!opts.dryRun) {
+    releaseStaleItems(bb);
+  }
 
   // Query available work items
   const items = bb.listWorkItems({
@@ -343,20 +393,39 @@ export async function dispatch(
       const sfMeta = parseSpecFlowMeta(item.metadata);
       if (sfMeta) {
         try {
-          const success = await runSpecFlowPhase(bb, item, {
+          const sfResult = await runSpecFlowPhase(bb, item, {
             project_id: item.project_id!,
             local_path: project?.local_path ?? resolvedWorkDir,
           }, sessionId);
 
           const durationMs = Date.now() - startTime;
 
-          if (success) {
+          if (sfResult.status === 'completed') {
             bb.completeWorkItem(item.item_id, sessionId);
             bb.appendEvent({
               actorId: sessionId,
               targetId: item.item_id,
               summary: `SpecFlow phase "${sfMeta.specflow_phase}" completed for ${sfMeta.specflow_feature_id} (${Math.round(durationMs / 1000)}s)`,
-              metadata: { phase: sfMeta.specflow_phase, durationMs },
+              metadata: { phase: sfMeta.specflow_phase, durationMs, nextPhase: sfResult.nextPhase },
+            });
+
+            result.dispatched.push({
+              itemId: item.item_id,
+              title: item.title,
+              projectId: item.project_id!,
+              sessionId,
+              exitCode: 0,
+              completed: true,
+              durationMs,
+            });
+          } else if (sfResult.status === 'retry') {
+            // Retry items are already created by the runner — just release this one
+            bb.completeWorkItem(item.item_id, sessionId);
+            bb.appendEvent({
+              actorId: sessionId,
+              targetId: item.item_id,
+              summary: `SpecFlow phase "${sfMeta.specflow_phase}" needs retry for ${sfMeta.specflow_feature_id} (${Math.round(durationMs / 1000)}s)`,
+              metadata: { phase: sfMeta.specflow_phase, durationMs, retryItemId: sfResult.retryItemId },
             });
 
             result.dispatched.push({
@@ -369,18 +438,19 @@ export async function dispatch(
               durationMs,
             });
           } else {
+            // 'failed' or 'blocked' — release for potential re-dispatch
             try { bb.releaseWorkItem(item.item_id, sessionId); } catch { /* best effort */ }
             bb.appendEvent({
               actorId: sessionId,
               targetId: item.item_id,
-              summary: `SpecFlow phase "${sfMeta.specflow_phase}" failed for ${sfMeta.specflow_feature_id} (${Math.round(durationMs / 1000)}s)`,
-              metadata: { phase: sfMeta.specflow_phase, durationMs },
+              summary: `SpecFlow phase "${sfMeta.specflow_phase}" ${sfResult.status} for ${sfMeta.specflow_feature_id} (${Math.round(durationMs / 1000)}s)`,
+              metadata: { phase: sfMeta.specflow_phase, durationMs, status: sfResult.status },
             });
 
             result.errors.push({
               itemId: item.item_id,
               title: item.title,
-              error: `SpecFlow phase "${sfMeta.specflow_phase}" failed`,
+              error: `SpecFlow phase "${sfMeta.specflow_phase}" ${sfResult.status}`,
             });
           }
         } catch (err: unknown) {

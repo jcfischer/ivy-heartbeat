@@ -400,24 +400,27 @@ export function registerDispatchWorkerCommand(
       const sfMeta = parseSpecFlowMeta(item.metadata);
       if (sfMeta) {
         try {
-          const success = await runSpecFlowPhase(bb, item, {
+          const sfResult = await runSpecFlowPhase(bb, item, {
             project_id: item.project_id!,
             local_path: project?.local_path ?? resolvedWorkDir,
           }, sessionId);
 
-          if (success) {
+          if (sfResult.status === 'completed' || sfResult.status === 'retry') {
             bb.completeWorkItem(itemId, sessionId);
             bb.appendEvent({
               actorId: sessionId,
               targetId: itemId,
-              summary: `SpecFlow phase "${sfMeta.specflow_phase}" completed for ${sfMeta.specflow_feature_id}`,
+              summary: `SpecFlow phase "${sfMeta.specflow_phase}" ${sfResult.status} for ${sfMeta.specflow_feature_id}`,
+              metadata: { nextPhase: sfResult.nextPhase, retryItemId: sfResult.retryItemId },
             });
           } else {
+            // 'failed' or 'blocked' — release for potential re-dispatch
             try { bb.releaseWorkItem(itemId, sessionId); } catch { /* best effort */ }
             bb.appendEvent({
               actorId: sessionId,
               targetId: itemId,
-              summary: `SpecFlow phase "${sfMeta.specflow_phase}" failed for ${sfMeta.specflow_feature_id}`,
+              summary: `SpecFlow phase "${sfMeta.specflow_phase}" ${sfResult.status} for ${sfMeta.specflow_feature_id}`,
+              metadata: { status: sfResult.status },
             });
           }
         } catch (err: unknown) {
