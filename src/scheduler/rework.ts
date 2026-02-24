@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import type { Blackboard } from '../blackboard.ts';
 import type { BlackboardProject, BlackboardWorkItem } from 'ivy-blackboard/src/types';
 import type { SessionLauncher } from './types.ts';
-import type { InlineComment } from './pr-comments.ts';
+import { formatInlineComments, type InlineComment } from './pr-comments.ts';
 import {
   stashIfDirty,
   popStash,
@@ -108,8 +108,8 @@ export function resolveMaxReworkCycles(
     return Math.min(metaMaxCycles, MAX_REWORK_CYCLES);
   }
 
-  // No project config and no metadata override — use hard limit for backward compat
-  return MAX_REWORK_CYCLES;
+  // No project config and no metadata override — use default
+  return DEFAULT_MAX_REWORK_CYCLES;
 }
 
 /**
@@ -368,9 +368,10 @@ export async function runRework(
  * Build the prompt for a rework agent that addresses review feedback.
  */
 export function buildReworkPrompt(meta: ReworkMetadata): string {
+  const effectiveMax = meta.max_rework_cycles ?? MAX_REWORK_CYCLES;
   const parts = [
     `You are addressing code review feedback for PR #${meta.pr_number} in ${meta.repo}.`,
-    `This is rework cycle ${meta.rework_cycle}/${MAX_REWORK_CYCLES}.`,
+    `This is rework cycle ${meta.rework_cycle}/${effectiveMax}.`,
     '',
     '## Review Feedback to Address',
     '',
@@ -380,12 +381,7 @@ export function buildReworkPrompt(meta: ReworkMetadata): string {
 
   // Include structured inline comments if available
   if (meta.inline_comments && meta.inline_comments.length > 0) {
-    parts.push('## File-Level Comments', '');
-    for (const c of meta.inline_comments) {
-      parts.push(`### ${c.path}:${c.line}`);
-      parts.push(`> ${c.body}`);
-      parts.push(`— @${c.author}`, '');
-    }
+    parts.push(...formatInlineComments(meta.inline_comments));
   }
 
   parts.push(

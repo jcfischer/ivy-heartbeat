@@ -157,14 +157,17 @@ describe('createReworkWorkItem', () => {
     expect(call.description).toContain('fix/5');
   });
 
-  test('cycle 3 is allowed, cycle 4 is blocked', () => {
+  test('cycle within default limit allowed, above escalates', () => {
     const bb = createMockBb();
     const opts = {
       prNumber: 1, prUrl: '', repo: 'o/r', branch: 'b',
       implementationWorkItemId: 'x', reviewFeedback: 'f',
       projectId: 'p', originalTitle: 't',
     };
-    expect(createReworkWorkItem(bb as any, { ...opts, reworkCycle: 3 })).not.toBeNull();
+    // DEFAULT_MAX_REWORK_CYCLES (2) is fallback — cycle 2 allowed, cycle 3 escalates
+    expect(createReworkWorkItem(bb as any, { ...opts, reworkCycle: 2 })).not.toBeNull();
+    expect(createReworkWorkItem(bb as any, { ...opts, reworkCycle: 3 })).toBeNull();
+    // Hard limit (MAX_REWORK_CYCLES=3) blocks cycle 4 regardless
     expect(createReworkWorkItem(bb as any, { ...opts, reworkCycle: 4 })).toBeNull();
   });
 });
@@ -233,9 +236,9 @@ describe('resolveMaxReworkCycles', () => {
     expect(resolveMaxReworkCycles(bb as any, 'test-proj', 2)).toBe(2);
   });
 
-  test('falls back to MAX_REWORK_CYCLES when no config at all', () => {
+  test('falls back to DEFAULT_MAX_REWORK_CYCLES when no config at all', () => {
     const bb = createMockBb();
-    expect(resolveMaxReworkCycles(bb as any, 'test-proj')).toBe(MAX_REWORK_CYCLES);
+    expect(resolveMaxReworkCycles(bb as any, 'test-proj')).toBe(DEFAULT_MAX_REWORK_CYCLES);
   });
 });
 

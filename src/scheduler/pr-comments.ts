@@ -101,6 +101,21 @@ export async function fetchPRComments(
 }
 
 /**
+ * Format an array of inline comments into markdown lines.
+ * Shared helper used by both formatCommentsForPrompt and buildReworkPrompt.
+ */
+export function formatInlineComments(comments: InlineComment[]): string[] {
+  if (comments.length === 0) return [];
+  const lines: string[] = ['## File-Level Comments', ''];
+  for (const c of comments) {
+    lines.push(`### ${c.path}:${c.line}`);
+    lines.push(`> ${c.body}`);
+    lines.push(`— @${c.author}`, '');
+  }
+  return lines;
+}
+
+/**
  * Format PR review comments into a structured prompt section.
  *
  * Produces markdown with:
@@ -128,15 +143,7 @@ export function formatCommentsForPrompt(
     }
   }
 
-  if (comments.length > 0) {
-    parts.push('## File-Level Comments');
-    parts.push('');
-    for (const c of comments) {
-      parts.push(`### ${c.path}:${c.line}`);
-      parts.push(`> ${c.body}`);
-      parts.push(`— @${c.author}`, '');
-    }
-  }
+  parts.push(...formatInlineComments(comments));
 
   return parts.join('\n');
 }
