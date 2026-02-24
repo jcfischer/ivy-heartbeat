@@ -19,11 +19,13 @@ export interface SpecFlowWorkItemMetadata {
 }
 
 /** Phase → next phase (null = pipeline done) */
+// Note: 'complete' runs inline within handleImplementPhase (before PR creation),
+// so implement is the terminal phase in the work item chain.
 export const PHASE_TRANSITIONS: Record<SpecFlowPhase, SpecFlowPhase | null> = {
   specify: 'plan',
   plan: 'tasks',
   tasks: 'implement',
-  implement: 'complete',
+  implement: null,
   complete: null,
 };
 

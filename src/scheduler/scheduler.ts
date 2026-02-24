@@ -13,14 +13,12 @@ import {
   commitAll,
   pushBranch,
   createPR,
-  mergePR,
-  pullMain,
   getDiffSummary,
   buildCommentPrompt,
 } from './worktree.ts';
 import { parseSpecFlowMeta } from './specflow-types.ts';
 import { runSpecFlowPhase } from './specflow-runner.ts';
-import { parseMergeFixMeta, createMergeFixWorkItem, runMergeFix } from './merge-fix.ts';
+import { parseMergeFixMeta, runMergeFix } from './merge-fix.ts';
 import { parseReworkMeta, runRework } from './rework.ts';
 import { dispatchReviewAgent } from './review-agent.ts';
 import type {
@@ -678,79 +676,8 @@ export async function dispatch(
                   // Review item creation failed (non-fatal)
                 }
 
-                // Auto-merge for trusted contributors (non-fatal)
-                // Skip if code review was requested (review happens in next dispatch cycle)
-                if (!ghMeta.humanReviewRequired && !reviewCreated) {
-                  try {
-                    const merged = await mergePR(worktreePath, pr.number);
-                    if (merged) {
-                      bb.appendEvent({
-                        actorId: sessionId,
-                        targetId: item.item_id,
-                        summary: `Auto-merged PR #${pr.number} (squash) for "${item.title}"`,
-                        metadata: { prNumber: pr.number, autoMerge: true },
-                      });
-
-                      // Pull merged changes into main repo
-                      try {
-                        await pullMain(project.local_path, mainBranch);
-                        bb.appendEvent({
-                          actorId: sessionId,
-                          targetId: item.item_id,
-                          summary: `Pulled merged changes into ${project.local_path}`,
-                          metadata: { mainBranch, pullAfterMerge: true },
-                        });
-                      } catch (pullErr: unknown) {
-                        const pullMsg = pullErr instanceof Error ? pullErr.message : String(pullErr);
-                        bb.appendEvent({
-                          actorId: sessionId,
-                          targetId: item.item_id,
-                          summary: `Pull after merge failed (non-fatal): ${pullMsg}`,
-                          metadata: { error: pullMsg },
-                        });
-                      }
-                    } else {
-                      // Create recovery work item for merge failure
-                      const mergeFixId = createMergeFixWorkItem(bb, {
-                        originalItemId: item.item_id,
-                        prNumber: pr.number,
-                        prUrl: pr.url,
-                        branch: branch!,
-                        mainBranch: mainBranch!,
-                        issueNumber: ghMeta.issueNumber,
-                        projectId: item.project_id!,
-                        originalTitle: item.title,
-                        sessionId,
-                      });
-                      bb.appendEvent({
-                        actorId: sessionId,
-                        targetId: item.item_id,
-                        summary: `Auto-merge failed for PR #${pr.number} — created recovery item ${mergeFixId}`,
-                        metadata: { prNumber: pr.number, autoMerge: false, mergeFixItemId: mergeFixId },
-                      });
-                    }
-                  } catch (mergeErr: unknown) {
-                    const mergeMsg = mergeErr instanceof Error ? mergeErr.message : String(mergeErr);
-                    // Create recovery work item for merge error
-                    const mergeFixId = createMergeFixWorkItem(bb, {
-                      originalItemId: item.item_id,
-                      prNumber: pr.number,
-                      prUrl: pr.url,
-                      branch: branch!,
-                      mainBranch: mainBranch!,
-                      issueNumber: ghMeta.issueNumber,
-                      projectId: item.project_id!,
-                      originalTitle: item.title,
-                      sessionId,
-                    });
-                    bb.appendEvent({
-                      actorId: sessionId,
-                      targetId: item.item_id,
-                      summary: `Auto-merge error for PR #${pr.number}: ${mergeMsg} — created recovery item ${mergeFixId}`,
-                      metadata: { prNumber: pr.number, error: mergeMsg, mergeFixItemId: mergeFixId },
-                    });
-                  }
-                }
+                // No auto-merge — all PRs go through code review first.
+                // The review-agent will approve/request-changes in the next dispatch cycle.
 
                 // Launch commenter agent (non-fatal)
                 try {

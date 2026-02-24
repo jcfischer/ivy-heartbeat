@@ -736,24 +736,7 @@ export async function runSpecFlowPhase(
 
   // ─── Implement phase: git ops ────────────────────────────────────
   if (phase === 'implement') {
-    await handleImplementPhase(bb, item, meta, worktreePath, branch, mainBranch, sessionId);
-  }
-
-  // ─── Complete phase: cleanup ─────────────────────────────────────
-  if (phase === 'complete') {
-    await spawner(['complete', featureId], worktreePath, 60_000);
-    try {
-      await worktreeOps.removeWorktree(project.local_path, worktreePath);
-      bb.appendEvent({
-        actorId: sessionId,
-        targetId: item.item_id,
-        summary: `Cleaned up worktree for completed feature ${featureId}`,
-        metadata: { worktreePath },
-      });
-    } catch {
-      // Non-fatal — staleness cleanup will handle it
-    }
-    return { status: 'completed' };
+    await handleImplementPhase(bb, item, meta, worktreePath, branch, mainBranch, sessionId, project.local_path);
   }
 
   // ─── Chain next phase ────────────────────────────────────────────
@@ -1107,7 +1090,8 @@ async function handleImplementPhase(
   worktreePath: string,
   branch: string,
   mainBranch: string,
-  sessionId: string
+  sessionId: string,
+  projectPath: string
 ): Promise<void> {
   const featureId = meta.specflow_feature_id;
 
@@ -1122,6 +1106,37 @@ async function handleImplementPhase(
       metadata: { featureId },
     });
     return;
+  }
+
+  // ─── Run specflow complete BEFORE creating PR ───────────────────
+  // Validates that all artifacts (docs.md, verify.md) are present and
+  // marks the feature as complete in the specflow DB. This ensures the
+  // PR is only created for fully validated features.
+  try {
+    const completeResult = await spawner(['complete', featureId], worktreePath, 60_000);
+    if (completeResult.exitCode === 0) {
+      bb.appendEvent({
+        actorId: sessionId,
+        targetId: item.item_id,
+        summary: `SpecFlow complete passed for ${featureId} — proceeding to PR creation`,
+        metadata: { featureId },
+      });
+    } else {
+      bb.appendEvent({
+        actorId: sessionId,
+        targetId: item.item_id,
+        summary: `SpecFlow complete failed (exit ${completeResult.exitCode}) for ${featureId} — creating PR anyway for review`,
+        metadata: { featureId, exitCode: completeResult.exitCode, stderr: completeResult.stderr.slice(0, 500) },
+      });
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    bb.appendEvent({
+      actorId: sessionId,
+      targetId: item.item_id,
+      summary: `SpecFlow complete error for ${featureId}: ${msg} — creating PR anyway`,
+      metadata: { featureId, error: msg },
+    });
   }
 
   // Push and create PR
@@ -1149,4 +1164,17 @@ async function handleImplementPhase(
     summary: `Created PR #${pr.number} for ${featureId}`,
     metadata: { prNumber: pr.number, prUrl: pr.url, commitSha: sha },
   });
+
+  // Clean up worktree now that PR is created
+  try {
+    await worktreeOps.removeWorktree(projectPath, worktreePath);
+    bb.appendEvent({
+      actorId: sessionId,
+      targetId: item.item_id,
+      summary: `Cleaned up worktree for completed feature ${featureId}`,
+      metadata: { worktreePath },
+    });
+  } catch {
+    // Non-fatal — staleness cleanup will handle it
+  }
 }
