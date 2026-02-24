@@ -681,6 +681,7 @@ export async function dispatch(
                       branch,
                       main_branch: mainBranch,
                       implementation_work_item_id: item.item_id,
+                      worktree_path: worktreePath,
                       review_status: null,
                     }),
                   });
