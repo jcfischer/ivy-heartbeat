@@ -5,7 +5,7 @@ node_modules/
 *.db-wal
 *.db-shm
 .DS_Store
-.specflow/*.db
+.specflow/
 dist/
 *.bun-build
 .claude-checkpoint.md
