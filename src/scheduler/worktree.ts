@@ -388,6 +388,29 @@ export async function mergePR(
 }
 
 /**
+ * Check the state of a PR via gh CLI.
+ * Returns 'MERGED', 'OPEN', 'CLOSED', or null if the check fails.
+ */
+export async function getPRState(
+  cwd: string,
+  prNumber: number
+): Promise<'MERGED' | 'OPEN' | 'CLOSED' | null> {
+  try {
+    const raw = await gh(
+      ['pr', 'view', String(prNumber), '--json', 'state', '--jq', '.state'],
+      cwd
+    );
+    const state = raw.trim().toUpperCase();
+    if (state === 'MERGED' || state === 'OPEN' || state === 'CLOSED') {
+      return state;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Pull latest changes into the main repo from origin.
  * Used after merging a PR so the local main branch stays in sync.
  */

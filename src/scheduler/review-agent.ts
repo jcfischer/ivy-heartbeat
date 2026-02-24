@@ -4,6 +4,7 @@ import type { Blackboard } from '../blackboard.ts';
 import type { BlackboardWorkItem } from 'ivy-blackboard/src/types';
 import { getLauncher, logPathForSession } from './launcher.ts';
 import { createReworkWorkItem } from './rework.ts';
+import { createPRMergeWorkItem } from './pr-merge.ts';
 
 interface ReviewContext {
   prNumber: number;
@@ -172,6 +173,25 @@ export async function dispatchReviewAgent(
     metadata: { ...updatedMeta, eventType },
   });
 
+  // On approval: create a merge work item so the PR gets merged in the next dispatch cycle
+  if (review.status === 'approved' && existingMeta.repo && existingMeta.branch) {
+    try {
+      createPRMergeWorkItem(bb, {
+        prNumber: existingMeta.pr_number ?? ctx.prNumber,
+        prUrl: existingMeta.pr_url ?? `https://github.com/${ctx.repo}/pull/${ctx.prNumber}`,
+        repo: existingMeta.repo ?? ctx.repo,
+        branch: existingMeta.branch ?? ctx.branch,
+        mainBranch: existingMeta.main_branch ?? 'main',
+        implementationWorkItemId: targetId,
+        projectId: item.project_id ?? '',
+        originalTitle: item.title.replace(/^Code review:\s*/i, ''),
+        sessionId,
+      });
+    } catch {
+      // Merge item creation failed (non-fatal — PR can be merged manually)
+    }
+  }
+
   // On changes_requested: create a rework work item so the feedback loop continues
   if (review.status === 'changes_requested' && existingMeta.repo && existingMeta.branch) {
     const currentCycle = (existingMeta.rework_cycle ?? 0) + 1;
@@ -180,6 +200,7 @@ export async function dispatchReviewAgent(
       prUrl: existingMeta.pr_url ?? `https://github.com/${ctx.repo}/pull/${ctx.prNumber}`,
       repo: existingMeta.repo ?? ctx.repo,
       branch: existingMeta.branch ?? ctx.branch,
+      mainBranch: existingMeta.main_branch ?? 'main',
       implementationWorkItemId: targetId,
       reviewFeedback: review.summary,
       reworkCycle: currentCycle,

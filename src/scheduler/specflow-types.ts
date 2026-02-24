@@ -19,11 +19,13 @@ export interface SpecFlowWorkItemMetadata {
 }
 
 /** Phase → next phase (null = pipeline done) */
+// Note: 'complete' runs inline within handleImplementPhase (before PR creation),
+// so implement is the terminal phase in the work item chain.
 export const PHASE_TRANSITIONS: Record<SpecFlowPhase, SpecFlowPhase | null> = {
   specify: 'plan',
   plan: 'tasks',
   tasks: 'implement',
-  implement: 'complete',
+  implement: null,
   complete: null,
 };
 
@@ -57,19 +59,45 @@ export const PHASE_EXPECTED_ARTIFACTS: Partial<Record<SpecFlowPhase, string>> = 
 /**
  * Parse and validate SpecFlow metadata from a work item's metadata JSON string.
  * Returns null if metadata is missing, invalid, or not a SpecFlow item.
+ *
+ * Accepts both canonical (specflow_*) and shorthand (phase, feature_id) key formats.
+ * Shorthand keys are normalized to canonical format to prevent silent dispatch failures
+ * when work items are created outside the standard evaluator pipeline.
  */
 export function parseSpecFlowMeta(metadata: string | null): SpecFlowWorkItemMetadata | null {
   if (!metadata) return null;
   try {
     const parsed = JSON.parse(metadata);
+    // Canonical keys
     if (parsed.specflow_phase && parsed.specflow_feature_id && parsed.specflow_project_id) {
       return parsed as SpecFlowWorkItemMetadata;
+    }
+    // Shorthand keys — normalize to canonical
+    const phase = parsed.phase ?? parsed.specflow_phase;
+    const featureId = parsed.feature_id ?? parsed.specflow_feature_id;
+    const projectId = parsed.project_id ?? parsed.specflow_project_id;
+    if (phase && featureId && projectId) {
+      return {
+        ...parsed,
+        specflow_phase: phase,
+        specflow_feature_id: featureId,
+        specflow_project_id: projectId,
+      } as SpecFlowWorkItemMetadata;
     }
   } catch {
     // Invalid JSON
   }
   return null;
 }
+
+/** Result from runSpecFlowPhase — replaces ambiguous boolean return */
+export type SpecFlowPhaseResult = {
+  status: 'completed' | 'failed' | 'retry' | 'blocked';
+  /** Next phase chained (if any) */
+  nextPhase?: SpecFlowPhase;
+  /** Retry work item ID (if status === 'retry') */
+  retryItemId?: string;
+};
 
 /**
  * Get the next phase in the pipeline, or null if complete.

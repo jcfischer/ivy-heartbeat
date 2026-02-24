@@ -505,7 +505,7 @@ describe('specflow-runner', () => {
         'test-session'
       );
 
-      expect(result).toBe(true);
+      expect(result).toEqual({ status: 'completed' });
       // Launcher should have been called twice (docs.md + verify.md)
       expect(launcherCalls).toHaveLength(2);
       expect(launcherCalls[0]).toContain('docs');
@@ -546,7 +546,7 @@ describe('specflow-runner', () => {
         'test-session'
       );
 
-      expect(result).toBe(false);
+      expect(result).toEqual({ status: 'failed' });
     });
 
     test('returns false when retry fails after artifact generation', async () => {
@@ -585,7 +585,7 @@ describe('specflow-runner', () => {
       );
 
       // Should fail because retry also fails
-      expect(result).toBe(false);
+      expect(result).toEqual({ status: 'failed' });
     });
 
     test('returns false when complete fails for non-artifact reason', async () => {
@@ -614,7 +614,7 @@ describe('specflow-runner', () => {
       );
 
       // Should fail — no artifact generation attempted
-      expect(result).toBe(false);
+      expect(result).toEqual({ status: 'failed' });
     });
   });
 
