@@ -111,7 +111,7 @@ export function registerSpecFlowQueueCommand(
         process.exit(1);
       }
 
-      // Check feature exists via specflow status
+      // Check feature exists via specflow status and fix stale status
       if (project.local_path) {
         try {
           const proc = Bun.spawn(['specflow', 'status', '--json'], {
@@ -126,15 +126,27 @@ export function registerSpecFlowQueueCommand(
             const status = JSON.parse(output);
             const features = status.features ?? status;
             const featureList = Array.isArray(features) ? features : [];
-            const found = featureList.some(
+            const feature = featureList.find(
               (f: { id?: string; feature_id?: string }) =>
                 f.id === opts.feature || f.feature_id === opts.feature
             );
 
-            if (!found && featureList.length > 0) {
+            if (!feature && featureList.length > 0) {
               console.error(
                 `Warning: feature "${opts.feature}" not found in specflow status. Proceeding anyway.`
               );
+            }
+
+            // Reset stale "complete" status if the feature hasn't actually
+            // been through all phases (no completedAt timestamp)
+            if (feature && feature.status === 'complete' && !feature.completedAt) {
+              console.log(`Resetting stale "complete" status for ${opts.feature} (no completion timestamp)`);
+              const resetProc = Bun.spawn(['specflow', 'reset', opts.feature], {
+                cwd: project.local_path,
+                stdout: 'pipe',
+                stderr: 'pipe',
+              });
+              await resetProc.exited;
             }
           }
         } catch {

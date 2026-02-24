@@ -432,13 +432,39 @@ export async function runSpecFlowPhase(
           (f: { id?: string }) => f.id === featureId
         );
         const dbPhase = feature?.phase ?? 'none';
+        const dbStatus = feature?.status ?? 'pending';
         // Phase order for comparison
         const phaseOrder: Record<string, number> = {
           none: 0, specify: 1, plan: 2, tasks: 3, implement: 4, complete: 5,
         };
         const prereqOrder = phaseOrder[prerequisite] ?? 0;
         const currentOrder = phaseOrder[dbPhase] ?? 0;
-        if (currentOrder < prereqOrder) {
+
+        // ─── Stale status reset ─────────────────────────────────
+        // If the feature is marked "complete" but we're trying to run a
+        // non-terminal phase, the status is stale (manual DB edit, lost
+        // artifacts, etc.). Reset it so the specflow CLI doesn't skip.
+        if (dbStatus === 'complete' && phase !== 'complete') {
+          bb.appendEvent({
+            actorId: sessionId,
+            targetId: item.item_id,
+            summary: `Resetting stale status "complete" for ${featureId} — phase "${phase}" still needed`,
+            metadata: { phase, dbPhase, dbStatus, featureId },
+          });
+          await spawner(['reset', featureId], worktreePath, 10_000);
+          // After reset, feature is at phase=specify, status=pending.
+          // Set phase to the prerequisite for the requested phase so
+          // specflow CLI will actually run.
+          const prereqPhaseForReset: Record<string, string> = {
+            plan: 'specify',
+            tasks: 'plan',
+            implement: 'tasks',
+          };
+          const targetPhase = prereqPhaseForReset[phase];
+          if (targetPhase) {
+            await spawner(['phase', featureId, targetPhase], worktreePath, 10_000);
+          }
+        } else if (currentOrder < prereqOrder) {
           bb.appendEvent({
             actorId: sessionId,
             targetId: item.item_id,
