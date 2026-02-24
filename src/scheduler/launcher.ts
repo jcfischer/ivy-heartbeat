@@ -221,11 +221,13 @@ async function defaultLauncher(opts: LaunchOptions): Promise<LaunchResult> {
   }
   args.push(opts.prompt);
 
+  const env: Record<string, string | undefined> = { ...process.env, CLAUDECODE: undefined };
+
   const proc = Bun.spawn(args, {
     cwd: opts.workDir,
     stdout: 'pipe',
     stderr: 'pipe',
-    env: { ...process.env, CLAUDECODE: undefined },
+    env,
   });
 
   // Set up timeout
