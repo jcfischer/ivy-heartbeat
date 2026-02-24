@@ -9,6 +9,8 @@ import { setTanaBlackboardAccessor, resetTanaBlackboardAccessor } from '../evalu
 import { setDispatchBlackboard, resetDispatchBlackboard } from '../evaluators/agent-dispatch.ts';
 import { setWatcherBlackboardAccessor, resetWatcherBlackboardAccessor } from '../evaluators/github-issue-watcher.ts';
 import { setPrReviewBlackboardAccessor, resetPrReviewBlackboardAccessor } from '../evaluators/github-pr-review.ts';
+import { setCleanupBlackboard, resetCleanupBlackboard } from '../evaluators/specflow-cleanup.ts';
+import { setReviewCycleAccessor, resetReviewCycleAccessor } from '../scheduler/worktree.ts';
 import type {
   CheckOptions,
   CheckResult,
@@ -92,6 +94,8 @@ export async function runChecks(
   setDispatchBlackboard(bb);
   setWatcherBlackboardAccessor(bb);
   setPrReviewBlackboardAccessor(bb);
+  setCleanupBlackboard(bb);
+  setReviewCycleAccessor(bb);
 
   const results: CheckResult[] = [];
   let alerts = 0;
@@ -164,6 +168,8 @@ export async function runChecks(
   resetDispatchBlackboard();
   resetWatcherBlackboardAccessor();
   resetPrReviewBlackboardAccessor();
+  resetCleanupBlackboard();
+  resetReviewCycleAccessor();
 
   return {
     timestamp: new Date().toISOString(),

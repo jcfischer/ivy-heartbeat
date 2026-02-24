@@ -15,6 +15,8 @@ import {
   createPR,
   getDiffSummary,
   buildCommentPrompt,
+  setReviewCycleAccessor,
+  resetReviewCycleAccessor,
 } from './worktree.ts';
 import { parseSpecFlowMeta } from './specflow-types.ts';
 import { runSpecFlowPhase } from './specflow-runner.ts';
@@ -195,6 +197,9 @@ export async function dispatch(
     errors: [],
     dryRun: opts.dryRun,
   };
+
+  // Wire up review cycle guard so createWorktree can check for active cycles
+  setReviewCycleAccessor(bb);
 
   // Release stale claimed items before querying for available work
   if (!opts.dryRun) {
@@ -821,5 +826,6 @@ export async function dispatch(
     }
   }
 
+  resetReviewCycleAccessor();
   return result;
 }

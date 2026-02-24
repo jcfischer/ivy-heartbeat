@@ -3,7 +3,7 @@ import { readdirSync, existsSync, statSync } from 'node:fs';
 import type { ChecklistItem } from '../parser/types.ts';
 import type { CheckResult } from '../check/types.ts';
 import type { Blackboard } from '../blackboard.ts';
-import { removeWorktree } from '../scheduler/worktree.ts';
+import { removeWorktree, hasActiveReviewCycle } from '../scheduler/worktree.ts';
 
 // ─── Injectable blackboard accessor (for testing) ─────────────────────
 
@@ -144,6 +144,13 @@ export async function evaluateSpecFlowCleanup(item: ChecklistItem): Promise<Chec
 
       if (lastActivity && lastActivity > staleThreshold) {
         continue; // Still active
+      }
+
+      // Guard: do not remove worktree if a review/rework cycle is active for this branch.
+      // The branch name follows the pattern 'specflow-{featureId}' (lowercase).
+      const branchName = `specflow-${wt.featureId.toLowerCase()}`;
+      if (hasActiveReviewCycle(branchName)) {
+        continue; // Review cycle active — preserve worktree
       }
 
       // Stale — remove
