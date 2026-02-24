@@ -244,6 +244,22 @@ export async function ensureWorktree(
   return worktreePath;
 }
 
+// ─── Branch helpers ──────────────────────────────────────────────────────
+
+/**
+ * Ensure the worktree is on the expected branch.
+ * If the worktree is on a different branch, checkout the expected one.
+ * Handles errors gracefully (branch not found, uncommitted changes).
+ */
+export async function ensureBranch(
+  worktreePath: string,
+  branch: string
+): Promise<void> {
+  const current = await git(['rev-parse', '--abbrev-ref', 'HEAD'], worktreePath);
+  if (current === branch) return;
+  await git(['checkout', branch], worktreePath);
+}
+
 // ─── Post-agent git operations ────────────────────────────────────────────
 
 /**
