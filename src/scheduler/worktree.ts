@@ -421,6 +421,38 @@ export async function pullMain(
   await git(['pull', 'origin', branch], projectPath);
 }
 
+/**
+ * Reopen a closed PR via gh CLI.
+ * Returns true if the reopen succeeded, false otherwise.
+ */
+export async function reopenPR(
+  cwd: string,
+  prNumber: number
+): Promise<boolean> {
+  try {
+    await gh(['pr', 'reopen', String(prNumber)], cwd);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check if a remote branch exists on origin.
+ * Returns true if the branch exists, false otherwise.
+ */
+export async function remoteBranchExists(
+  cwd: string,
+  branch: string
+): Promise<boolean> {
+  try {
+    await git(['ls-remote', '--exit-code', 'origin', `refs/heads/${branch}`], cwd);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ─── Post-agent issue comment support ─────────────────────────────────────
 
 /**

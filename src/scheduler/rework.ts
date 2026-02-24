@@ -9,6 +9,10 @@ import {
   resolveWorktreePath,
   commitAll,
   pushBranch,
+  getPRState,
+  reopenPR,
+  remoteBranchExists,
+  createPR,
 } from './worktree.ts';
 
 /**
@@ -161,6 +165,84 @@ export async function runRework(
 ): Promise<void> {
   const rwWorktreePath = resolveWorktreePath(project.local_path, meta.branch, meta.project_id);
   let didStash = false;
+
+  // Check PR state before starting work — recover if PR was closed prematurely
+  const prState = await getPRState(project.local_path, meta.pr_number);
+
+  if (prState === 'CLOSED') {
+    const branchExists = await remoteBranchExists(project.local_path, meta.branch);
+
+    if (branchExists) {
+      // Branch still exists — try to reopen the PR
+      const reopened = await reopenPR(project.local_path, meta.pr_number);
+      if (reopened) {
+        bb.appendEvent({
+          actorId: sessionId,
+          targetId: item.item_id,
+          summary: `Reopened closed PR #${meta.pr_number} to allow rework (branch ${meta.branch} still exists)`,
+          metadata: { prNumber: meta.pr_number, recovery: 'reopen' },
+        });
+      } else {
+        bb.appendEvent({
+          actorId: sessionId,
+          targetId: item.item_id,
+          summary: `PR #${meta.pr_number} is closed and could not be reopened — rework blocked`,
+          metadata: { prNumber: meta.pr_number, recovery: 'reopen_failed' },
+        });
+        throw new Error(`PR #${meta.pr_number} is closed and could not be reopened`);
+      }
+    } else {
+      // Branch deleted — check if worktree exists to recreate
+      const { existsSync } = await import('node:fs');
+      if (existsSync(rwWorktreePath)) {
+        // Push branch from worktree and create a new PR
+        try {
+          await pushBranch(rwWorktreePath, meta.branch);
+          const newPr = await createPR(
+            rwWorktreePath,
+            `Rework: ${item.title}`,
+            `Recreated from worktree after PR #${meta.pr_number} was closed prematurely.\n\nOriginal review feedback:\n${meta.review_feedback}`,
+            meta.main_branch
+          );
+          bb.appendEvent({
+            actorId: sessionId,
+            targetId: item.item_id,
+            summary: `PR #${meta.pr_number} was closed and branch deleted — recreated as PR #${newPr.number} from worktree`,
+            metadata: { oldPrNumber: meta.pr_number, newPrNumber: newPr.number, newPrUrl: newPr.url, recovery: 'recreate' },
+          });
+          // Update metadata with new PR info
+          meta.pr_number = newPr.number;
+          meta.pr_url = newPr.url;
+        } catch (recreateErr: unknown) {
+          const msg = recreateErr instanceof Error ? recreateErr.message : String(recreateErr);
+          bb.appendEvent({
+            actorId: sessionId,
+            targetId: item.item_id,
+            summary: `PR #${meta.pr_number} closed, branch deleted, worktree exists but PR recreation failed: ${msg}`,
+            metadata: { prNumber: meta.pr_number, recovery: 'recreate_failed', error: msg },
+          });
+          throw new Error(`PR #${meta.pr_number} closed, branch deleted, recreation failed: ${msg}`);
+        }
+      } else {
+        // No branch, no worktree — unrecoverable
+        bb.appendEvent({
+          actorId: sessionId,
+          targetId: item.item_id,
+          summary: `PR #${meta.pr_number} closed, branch ${meta.branch} deleted, no worktree found — rework blocked, requires manual intervention`,
+          metadata: { prNumber: meta.pr_number, branch: meta.branch, recovery: 'unrecoverable' },
+        });
+        throw new Error(`PR #${meta.pr_number} closed, branch ${meta.branch} deleted, no worktree — unrecoverable`);
+      }
+    }
+  } else if (prState === 'MERGED') {
+    bb.appendEvent({
+      actorId: sessionId,
+      targetId: item.item_id,
+      summary: `PR #${meta.pr_number} already merged — rework no longer needed`,
+      metadata: { prNumber: meta.pr_number, prState: 'MERGED' },
+    });
+    return; // Nothing to do — PR was already merged
+  }
 
   try {
     didStash = await stashIfDirty(project.local_path);
