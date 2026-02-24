@@ -25,6 +25,7 @@ export interface ReworkMetadata {
   pr_url: string;
   repo: string;
   branch: string;
+  main_branch: string;
   implementation_work_item_id: string;
   review_feedback: string;
   rework_cycle: number;
@@ -46,6 +47,7 @@ export function parseReworkMeta(metadata: string | null): ReworkMetadata | null 
         pr_url: parsed.pr_url ?? '',
         repo: parsed.repo,
         branch: parsed.branch,
+        main_branch: parsed.main_branch ?? 'main',
         implementation_work_item_id: parsed.implementation_work_item_id ?? '',
         review_feedback: parsed.review_feedback ?? '',
         rework_cycle: typeof parsed.rework_cycle === 'number' ? parsed.rework_cycle : 1,
@@ -70,6 +72,7 @@ export function createReworkWorkItem(
     prUrl: string;
     repo: string;
     branch: string;
+    mainBranch?: string;
     implementationWorkItemId: string;
     reviewFeedback: string;
     reworkCycle: number;
@@ -110,6 +113,7 @@ export function createReworkWorkItem(
     pr_url: opts.prUrl,
     repo: opts.repo,
     branch: opts.branch,
+    main_branch: opts.mainBranch ?? 'main',
     implementation_work_item_id: opts.implementationWorkItemId,
     review_feedback: opts.reviewFeedback,
     rework_cycle: opts.reworkCycle,
@@ -212,6 +216,7 @@ export async function runRework(
             pr_url: meta.pr_url,
             repo: meta.repo,
             branch: meta.branch,
+            main_branch: meta.main_branch,
             implementation_work_item_id: meta.implementation_work_item_id,
             rework_cycle: meta.rework_cycle,
             review_status: null,

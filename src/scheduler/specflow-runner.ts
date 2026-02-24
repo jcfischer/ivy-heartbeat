@@ -736,7 +736,7 @@ export async function runSpecFlowPhase(
 
   // ─── Implement phase: git ops ────────────────────────────────────
   if (phase === 'implement') {
-    await handleImplementPhase(bb, item, meta, worktreePath, branch, mainBranch, sessionId, project.local_path);
+    await handleImplementPhase(bb, item, meta, worktreePath, branch, mainBranch, sessionId, project.local_path, project.remote_repo);
   }
 
   // ─── Chain next phase ────────────────────────────────────────────
@@ -1091,7 +1091,8 @@ async function handleImplementPhase(
   branch: string,
   mainBranch: string,
   sessionId: string,
-  projectPath: string
+  projectPath: string,
+  remoteRepo: string | null,
 ): Promise<void> {
   const featureId = meta.specflow_feature_id;
 
@@ -1164,6 +1165,40 @@ async function handleImplementPhase(
     summary: `Created PR #${pr.number} for ${featureId}`,
     metadata: { prNumber: pr.number, prUrl: pr.url, commitSha: sha },
   });
+
+  // Create code review work item for the feature PR
+  const repo = meta.github_repo ?? remoteRepo;
+  if (repo) {
+    const reviewItemId = `review-${meta.specflow_project_id}-pr-${pr.number}`;
+    try {
+      bb.createWorkItem({
+        id: reviewItemId,
+        title: `Code review: PR #${pr.number} - ${featureId}`,
+        description: `AI code review for SpecFlow feature PR #${pr.number}\nFeature: ${featureId}\nBranch: ${branch}\nRepo: ${repo}`,
+        project: meta.specflow_project_id,
+        source: 'code_review',
+        sourceRef: pr.url,
+        priority: 'P1',
+        metadata: JSON.stringify({
+          pr_number: pr.number,
+          pr_url: pr.url,
+          repo,
+          branch,
+          main_branch: mainBranch,
+          implementation_work_item_id: item.item_id,
+          review_status: null,
+        }),
+      });
+      bb.appendEvent({
+        actorId: sessionId,
+        targetId: item.item_id,
+        summary: `Created code review work item ${reviewItemId} for PR #${pr.number}`,
+        metadata: { reviewItemId, prNumber: pr.number },
+      });
+    } catch {
+      // Review item creation failed (non-fatal)
+    }
+  }
 
   // Clean up worktree now that PR is created
   try {

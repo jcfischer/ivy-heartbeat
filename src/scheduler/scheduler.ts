@@ -19,6 +19,7 @@ import {
 import { parseSpecFlowMeta } from './specflow-types.ts';
 import { runSpecFlowPhase } from './specflow-runner.ts';
 import { parseMergeFixMeta, runMergeFix } from './merge-fix.ts';
+import { parsePRMergeMeta, runPRMerge } from './pr-merge.ts';
 import { parseReworkMeta, runRework } from './rework.ts';
 import { dispatchReviewAgent } from './review-agent.ts';
 import type {
@@ -561,6 +562,24 @@ export async function dispatch(
         continue;
       }
 
+      // Determine if this is a post-review PR merge work item
+      const mergeMeta = parsePRMergeMeta(item.metadata);
+      if (mergeMeta && project) {
+        try {
+          await runPRMerge(bb, item, mergeMeta, project, sessionId);
+          bb.completeWorkItem(item.item_id, sessionId);
+          const durationMs = Date.now() - startTime;
+          result.dispatched.push({ itemId: item.item_id, title: item.title, projectId: item.project_id!, sessionId, exitCode: 0, completed: true, durationMs });
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          try { bb.releaseWorkItem(item.item_id, sessionId); } catch { /* best effort */ }
+          result.errors.push({ itemId: item.item_id, title: item.title, error: `PR merge failed: ${msg}` });
+        } finally {
+          bb.deregisterAgent(sessionId);
+        }
+        continue;
+      }
+
       const prompt = buildPrompt(item, sessionId);
 
       // Worktree setup for GitHub items
@@ -660,6 +679,7 @@ export async function dispatch(
                       pr_url: pr.url,
                       repo: ghMeta.repo,
                       branch,
+                      main_branch: mainBranch,
                       implementation_work_item_id: item.item_id,
                       review_status: null,
                     }),
