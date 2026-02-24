@@ -16,6 +16,7 @@ import {
   getPRState,
   getDiffSummary,
   buildCommentPrompt,
+  setReviewCycleAccessor,
 } from '../scheduler/worktree.ts';
 import { parseSpecFlowMeta } from '../scheduler/specflow-types.ts';
 import { runSpecFlowPhase } from '../scheduler/specflow-runner.ts';
@@ -378,6 +379,9 @@ export function registerDispatchWorkerCommand(
       // checks the correct (alive) process.
       bb.db.query('UPDATE agents SET pid = ?, last_seen_at = ? WHERE session_id = ?')
         .run(process.pid, new Date().toISOString(), sessionId);
+
+      // Wire up review cycle guard so createWorktree can check for active cycles
+      setReviewCycleAccessor(bb);
 
       // Read work item from blackboard
       const items = bb.listWorkItems({ status: 'claimed' });

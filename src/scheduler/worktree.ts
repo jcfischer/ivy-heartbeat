@@ -13,6 +13,86 @@ export interface PostAgentResult {
   prUrl?: string;
 }
 
+// ─── Review cycle guard ──────────────────────────────────────────────────
+
+/**
+ * Accessor interface for checking active review cycles on the blackboard.
+ * Injectable for testability (same pattern as specflow-cleanup.ts).
+ */
+export type ReviewCycleAccessor = {
+  listWorkItems(opts?: { status?: string }): Array<{
+    item_id: string;
+    source: string | null;
+    metadata: string | null;
+    status: string;
+  }>;
+};
+
+let reviewCycleAccessor: ReviewCycleAccessor | null = null;
+
+export function setReviewCycleAccessor(accessor: ReviewCycleAccessor): void {
+  reviewCycleAccessor = accessor;
+}
+
+export function resetReviewCycleAccessor(): void {
+  reviewCycleAccessor = null;
+}
+
+/**
+ * Check if a branch has an active review/rework cycle.
+ * Returns true if any pending or claimed work items exist that reference
+ * this branch in their metadata (review, rework, pr_merge, merge-fix).
+ *
+ * When true, the branch must NOT be deleted — a PR depends on it.
+ */
+export function hasActiveReviewCycle(branch: string): boolean {
+  if (!reviewCycleAccessor) return false;
+
+  const REVIEW_SOURCES = new Set(['code_review', 'rework', 'pr_merge', 'merge-fix']);
+
+  for (const status of ['pending', 'claimed'] as const) {
+    let items: Array<{ source: string | null; metadata: string | null }>;
+    try {
+      items = reviewCycleAccessor.listWorkItems({ status });
+    } catch {
+      continue;
+    }
+    for (const item of items) {
+      // Quick source check first
+      if (item.source && REVIEW_SOURCES.has(item.source)) {
+        if (metadataReferencesBranch(item.metadata, branch)) return true;
+      }
+      // Also check metadata flags regardless of source (for items with generic source)
+      if (item.metadata) {
+        try {
+          const meta = JSON.parse(item.metadata);
+          if ((meta.rework || meta.pr_merge || meta.merge_fix || meta.review_status !== undefined)
+            && metadataReferencesBranch(item.metadata, branch)) {
+            return true;
+          }
+        } catch {
+          // Invalid JSON — skip
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Check if a work item's metadata references a given branch name.
+ */
+function metadataReferencesBranch(metadata: string | null, branch: string): boolean {
+  if (!metadata) return false;
+  try {
+    const meta = JSON.parse(metadata);
+    return meta.branch === branch;
+  } catch {
+    return false;
+  }
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
 /**
@@ -142,6 +222,10 @@ export async function createWorktree(
   // Ensure parent directory exists
   mkdirSync(join(worktreeBaseDir(), dirName), { recursive: true });
 
+  // Guard: do not delete branch if a review/rework cycle is active for it.
+  // Deleting the remote branch would close the associated PR.
+  const reviewCycleActive = hasActiveReviewCycle(branch);
+
   // Clean up stale worktree if path exists
   if (existsSync(worktreePath)) {
     try {
@@ -152,18 +236,20 @@ export async function createWorktree(
     }
   }
 
-  // Delete local branch if it exists
-  try {
-    await git(['branch', '-D', branch], projectPath);
-  } catch {
-    // Branch doesn't exist locally — that's fine
-  }
+  if (!reviewCycleActive) {
+    // Delete local branch if it exists
+    try {
+      await git(['branch', '-D', branch], projectPath);
+    } catch {
+      // Branch doesn't exist locally — that's fine
+    }
 
-  // Delete remote branch if it exists
-  try {
-    await git(['push', 'origin', '--delete', branch], projectPath);
-  } catch {
-    // Remote branch doesn't exist — that's fine
+    // Delete remote branch if it exists
+    try {
+      await git(['push', 'origin', '--delete', branch], projectPath);
+    } catch {
+      // Remote branch doesn't exist — that's fine
+    }
   }
 
   // Fetch latest from origin to ensure we branch from up-to-date main
@@ -173,8 +259,18 @@ export async function createWorktree(
     // Fetch may fail if no remote configured — continue anyway
   }
 
-  // Create worktree with new branch
-  await git(['worktree', 'add', '-b', branch, worktreePath], projectPath);
+  // Create worktree with new branch (reuse existing branch if review cycle is active)
+  if (reviewCycleActive) {
+    // Branch exists — create worktree using existing branch (no -b flag)
+    try {
+      await git(['worktree', 'add', worktreePath, branch], projectPath);
+    } catch {
+      // Branch may not exist after all — create new
+      await git(['worktree', 'add', '-b', branch, worktreePath], projectPath);
+    }
+  } else {
+    await git(['worktree', 'add', '-b', branch, worktreePath], projectPath);
+  }
 
   return worktreePath;
 }
