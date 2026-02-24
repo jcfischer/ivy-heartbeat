@@ -6,7 +6,7 @@
  */
 
 import { join, dirname } from 'node:path';
-import { existsSync, readdirSync, mkdirSync, symlinkSync, lstatSync, cpSync, readFileSync, appendFileSync } from 'node:fs';
+import { existsSync, readdirSync, mkdirSync, symlinkSync, lstatSync, cpSync, readFileSync, appendFileSync, unlinkSync } from 'node:fs';
 import type { Blackboard } from '../blackboard.ts';
 import type { BlackboardWorkItem } from 'ivy-blackboard/src/types';
 import { getLauncher, logPathForSession } from './launcher.ts';
@@ -485,7 +485,13 @@ export async function runSpecFlowPhase(
   const cliArgs = buildCliArgs(phase, featureId, meta);
 
   // ─── Run specflow CLI ────────────────────────────────────────────
-  const result = await spawner(cliArgs, worktreePath, SPECFLOW_TIMEOUT_MS);
+  // For specify/plan/tasks: extract prompt from specflow and run via
+  // Max-authenticated launcher (avoids double-invocation where specflow's
+  // internal `claude -p` lacks Max OAuth credentials).
+  const LAUNCHER_PHASES: SpecFlowPhase[] = ['specify', 'plan', 'tasks'];
+  const result = LAUNCHER_PHASES.includes(phase)
+    ? await runPhaseViaLauncher(phase, featureId, cliArgs, worktreePath, sessionId, bb, item)
+    : await spawner(cliArgs, worktreePath, SPECFLOW_TIMEOUT_MS);
 
   if (result.exitCode === -1) {
     // Timeout
@@ -805,6 +811,120 @@ export async function runSpecFlowPhase(
   }
 
   return { status: 'completed', nextPhase: next ?? undefined };
+}
+
+// ─── Phase-via-launcher ─────────────────────────────────────────────────
+
+/**
+ * Run a specflow phase (specify/plan/tasks) by extracting the prompt from
+ * specflow and executing it via the Max-authenticated launcher.
+ *
+ * This avoids the double-invocation problem where specflow's internal
+ * `claude -p` call lacks Max OAuth credentials and falls back to API
+ * credits (which may be zero on a Max plan).
+ *
+ * Flow:
+ * 1. Run specflow with SPECFLOW_PROMPT_OUTPUT → specflow writes prompt JSON, exits 0
+ * 2. Parse the prompt JSON (contains prompt + systemPrompt)
+ * 3. Launch Claude via the Max-authenticated launcher (full tool access)
+ * 4. Advance the specflow DB phase (since specflow exited before updating it)
+ */
+async function runPhaseViaLauncher(
+  phase: SpecFlowPhase,
+  featureId: string,
+  cliArgs: string[],
+  worktreePath: string,
+  sessionId: string,
+  bb: Blackboard,
+  item: BlackboardWorkItem,
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  // Step 1: Run specflow in prompt-output mode
+  // Set env var that headless.ts checks — it writes the prompt to this file and exits.
+  // Using process.env so the injectable spawner (and its default impl) propagate it.
+  const promptFile = join(worktreePath, '.specflow-prompt.json');
+  process.env.SPECFLOW_PROMPT_OUTPUT = promptFile;
+
+  let sfResult: { exitCode: number; stdout: string; stderr: string };
+  try {
+    sfResult = await spawner(cliArgs, worktreePath, SPECFLOW_TIMEOUT_MS);
+  } finally {
+    delete process.env.SPECFLOW_PROMPT_OUTPUT;
+  }
+
+  // If specflow failed (validation error, feature not found, etc.), propagate
+  if (sfResult.exitCode !== 0) {
+    return sfResult;
+  }
+
+  // Step 2: Parse the prompt from the output file
+  let promptData: { prompt: string; systemPrompt?: string };
+  try {
+    const raw = readFileSync(promptFile, 'utf-8');
+    promptData = JSON.parse(raw);
+  } catch (err) {
+    return {
+      exitCode: 1,
+      stdout: '',
+      stderr: `Failed to read prompt from ${promptFile}: ${err}`,
+    };
+  }
+
+  // Clean up temp file
+  try { unlinkSync(promptFile); } catch {}
+
+  // Step 3: Build the full prompt for the launcher
+  // The launcher runs Claude with full tool access (Write, Read, Edit, Bash)
+  // so Claude can write artifact files directly to disk
+  const fullPrompt = [
+    promptData.systemPrompt
+      ? `[System Context] ${promptData.systemPrompt}`
+      : '',
+    '',
+    'IMPORTANT: You have full tool access. Write the artifact file directly to disk using the Write tool.',
+    `After creating the file, output [PHASE COMPLETE: ${phase.toUpperCase()}] in your response.`,
+    '',
+    promptData.prompt,
+  ].filter(Boolean).join('\n');
+
+  // Step 4: Launch Claude via Max-authenticated launcher
+  bb.appendEvent({
+    actorId: sessionId,
+    targetId: item.item_id,
+    summary: `Launching Claude (Max auth) for ${phase} phase of ${featureId}`,
+    metadata: { phase, featureId, promptLength: fullPrompt.length },
+  });
+
+  const launcher = getLauncher();
+  const launchResult = await launcher({
+    sessionId: `${sessionId}-${phase}`,
+    prompt: fullPrompt,
+    workDir: worktreePath,
+    timeoutMs: SPECFLOW_TIMEOUT_MS,
+  });
+
+  if (launchResult.exitCode !== 0) {
+    return {
+      exitCode: launchResult.exitCode,
+      stdout: launchResult.stdout,
+      stderr: launchResult.stderr,
+    };
+  }
+
+  // Step 5: Advance the specflow DB phase
+  // The specflow command exited early (prompt-output mode) without updating the DB,
+  // so we advance it manually after successful Claude execution.
+  const phaseResult = await spawner(['phase', featureId, phase], worktreePath, 10_000);
+  if (phaseResult.exitCode !== 0) {
+    bb.appendEvent({
+      actorId: sessionId,
+      targetId: item.item_id,
+      summary: `Warning: specflow DB phase advancement failed for ${featureId} → ${phase} (exit ${phaseResult.exitCode})`,
+      metadata: { stderr: phaseResult.stderr.slice(0, 500) },
+    });
+    // Non-fatal: artifact may still exist on disk, quality gate will verify
+  }
+
+  return { exitCode: 0, stdout: launchResult.stdout, stderr: launchResult.stderr };
 }
 
 // ─── CLI argument builder ──────────────────────────────────────────────

@@ -32,12 +32,25 @@ function mockSpawner(
 ): SpecFlowSpawner {
   return async (args, cwd, _timeoutMs) => {
     spawnerCalls.push({ args, cwd });
-    const key = args[0]; // phase name, 'eval', or 'init'
-    // Always succeed for init unless explicitly overridden
-    if (key === 'init' && !responses[key]) {
+    const key = args[0]; // phase name, 'eval', 'init', or 'phase'
+    // Always succeed for init/phase unless explicitly overridden
+    if ((key === 'init' || key === 'phase') && !responses[key]) {
       return { exitCode: 0, stdout: '', stderr: '' };
     }
     const response = responses[key] ?? { exitCode: 0, stdout: '', stderr: '' };
+
+    // Prompt-output mode: when SPECFLOW_PROMPT_OUTPUT is set, specflow writes
+    // the prompt to a file and exits instead of calling claude -p.
+    // In tests, this simulates the specflow binary's prompt-output behavior.
+    const promptOutputPath = process.env.SPECFLOW_PROMPT_OUTPUT;
+    if (promptOutputPath && PHASE_ARTIFACT_FILES[key] && response.exitCode === 0) {
+      writeFileSync(promptOutputPath, JSON.stringify({
+        prompt: `Mock ${key} prompt for ${args[1] ?? 'unknown'}`,
+        systemPrompt: `You are a ${key} agent.`,
+      }));
+      return response;
+    }
+
     // Simulate artifact creation on success (mirrors real specflow CLI behavior)
     if (response.exitCode === 0 && PHASE_ARTIFACT_FILES[key]) {
       const featureId = args[1] ?? 'F-001';
@@ -47,6 +60,19 @@ function mockSpawner(
     }
     return response;
   };
+}
+
+/** Mock launcher that creates the expected artifact file for a launcher-phase */
+function mockLauncherForPhase(phase: string) {
+  const artifactFile = PHASE_ARTIFACT_FILES[phase];
+  setLauncher(async (opts) => {
+    if (artifactFile) {
+      const specDir = `${opts.workDir}/.specify/specs/F-001`;
+      mkdirSync(specDir, { recursive: true });
+      writeFileSync(`${specDir}/${artifactFile}`, `# ${phase} artifact`);
+    }
+    return { exitCode: 0, stdout: '', stderr: '' };
+  });
 }
 
 function seedProject(id: string, path: string): void {
@@ -136,6 +162,7 @@ describe('specflow-runner', () => {
         specify: { exitCode: 0, stdout: '', stderr: '' },
         eval: { exitCode: 0, stdout: JSON.stringify({ results: [{ passed: true, score: 0.95, output: 'Good' }], passed: 1, failed: 0 }), stderr: '' },
       }));
+      mockLauncherForPhase('specify');
 
       // Register agent so runSpecFlowPhase can log events
       ctx.bb.registerAgent({ name: 'test', project: 'test-proj', work: item.item_id });
@@ -180,6 +207,7 @@ describe('specflow-runner', () => {
         plan: { exitCode: 0, stdout: '', stderr: '' },
         eval: { exitCode: 0, stdout: JSON.stringify({ results: [{ passed: true, score: 0.90, output: 'OK' }], passed: 1, failed: 0 }), stderr: '' },
       }));
+      mockLauncherForPhase('plan');
 
       ctx.bb.registerAgent({ name: 'test', project: 'test-proj', work: item.item_id });
 
@@ -217,6 +245,7 @@ describe('specflow-runner', () => {
       setSpecFlowSpawner(mockSpawner({
         tasks: { exitCode: 0, stdout: '', stderr: '' },
       }));
+      mockLauncherForPhase('tasks');
 
       ctx.bb.registerAgent({ name: 'test', project: 'test-proj', work: item.item_id });
 
@@ -231,8 +260,8 @@ describe('specflow-runner', () => {
       expect(tasksCall).toBeDefined();
       expect(tasksCall!.args).toEqual(['tasks', 'F-001']);
 
-      // No eval call — tasks has no quality gate (only init + status + tasks)
-      expect(spawnerCalls.filter((c) => c.args[0] !== 'init' && c.args[0] !== 'status')).toHaveLength(1);
+      // No eval call — tasks has no quality gate (only init + status + tasks + phase)
+      expect(spawnerCalls.filter((c) => !['init', 'status', 'phase'].includes(c.args[0]))).toHaveLength(1);
 
       // Should chain implement
       const items = ctx.bb.listWorkItems({ all: true });
@@ -253,6 +282,7 @@ describe('specflow-runner', () => {
         specify: { exitCode: 0, stdout: '', stderr: '' },
         eval: { exitCode: 0, stdout: JSON.stringify({ results: [{ passed: true, score: 0.80, output: 'Good' }], passed: 1, failed: 0 }), stderr: '' },
       }));
+      mockLauncherForPhase('specify');
 
       ctx.bb.registerAgent({ name: 'test', project: 'test-proj', work: item.item_id });
 
@@ -284,6 +314,7 @@ describe('specflow-runner', () => {
           stderr: '',
         },
       }));
+      mockLauncherForPhase('specify');
 
       ctx.bb.registerAgent({ name: 'test', project: 'test-proj', work: item.item_id });
 
@@ -324,6 +355,7 @@ describe('specflow-runner', () => {
           stderr: '',
         },
       }));
+      mockLauncherForPhase('specify');
 
       ctx.bb.registerAgent({ name: 'test', project: 'test-proj', work: item.item_id });
 
@@ -352,6 +384,7 @@ describe('specflow-runner', () => {
       setSpecFlowSpawner(mockSpawner({
         tasks: { exitCode: 0, stdout: '', stderr: '' },
       }));
+      mockLauncherForPhase('tasks');
 
       ctx.bb.registerAgent({ name: 'test', project: 'test-proj', work: item.item_id });
 
@@ -386,6 +419,7 @@ describe('specflow-runner', () => {
       setSpecFlowSpawner(mockSpawner({
         specify: { exitCode: 1, stdout: '', stderr: 'error' },
       }));
+      // Launcher not needed — specify fails before prompt extraction, so launcher is never called
 
       ctx.bb.registerAgent({ name: 'test', project: 'test-proj', work: item.item_id });
 
