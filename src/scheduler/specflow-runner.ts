@@ -731,7 +731,18 @@ export async function runSpecFlowPhase(
     if (!gateResult.passed) {
       const retryCount = meta.retry_count ?? 0;
       if (retryCount < MAX_RETRIES) {
-        await chainRetry(bb, item, meta, gateResult.feedback, worktreePath, mainBranch);
+        try {
+          await chainRetry(bb, item, meta, gateResult.feedback, worktreePath, mainBranch);
+        } catch (chainErr: unknown) {
+          // Content filter may block eval feedback in the retry description.
+          // Retry with truncated feedback so the pipeline continues.
+          const msg = chainErr instanceof Error ? chainErr.message : '';
+          if (msg.includes('Content blocked') || msg.includes('CONTENT_BLOCKED')) {
+            await chainRetry(bb, item, meta, `[feedback filtered] score: ${gateResult.score}%`, worktreePath, mainBranch);
+          } else {
+            throw chainErr;
+          }
+        }
         bb.appendEvent({
           actorId: sessionId,
           targetId: item.item_id,
@@ -768,7 +779,23 @@ export async function runSpecFlowPhase(
   // ─── Chain next phase ────────────────────────────────────────────
   const next = nextPhase(phase);
   if (next) {
-    await chainNextPhase(bb, item, meta, next, worktreePath, mainBranch);
+    try {
+      await chainNextPhase(bb, item, meta, next, worktreePath, mainBranch);
+    } catch (chainErr: unknown) {
+      // Content filter may block metadata in the new work item.
+      // Log and continue — the phase itself succeeded.
+      const msg = chainErr instanceof Error ? chainErr.message : '';
+      if (msg.includes('Content blocked') || msg.includes('CONTENT_BLOCKED')) {
+        bb.appendEvent({
+          actorId: sessionId,
+          targetId: item.item_id,
+          summary: `Content filter blocked chaining phase "${next}" for ${featureId} — manual queue needed`,
+          metadata: { phase, nextPhase: next, error: 'CONTENT_BLOCKED' },
+        });
+      } else {
+        throw chainErr;
+      }
+    }
     bb.appendEvent({
       actorId: sessionId,
       targetId: item.item_id,
