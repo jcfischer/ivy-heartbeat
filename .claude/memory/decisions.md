@@ -28,6 +28,21 @@
 - Alternatives rejected: (1) Passing Max OAuth tokens to specflow's env — fragile, couples auth. (2) Modifying specflow to use SDK directly — larger change, breaks standalone usage.
 - Status: Committed and pushed (2026-02-25)
 
+## 2026-02-25 - Replace compiled binaries with shell wrappers (all 3 projects)
+- Decision: All binaries (ivy-heartbeat, specflow, ivy-blackboard) now use `exec bun src/index.ts "$@"` wrappers instead of `bun build --compile`
+- Rationale: Eliminates three bug classes: (1) binary out of date after code changes, (2) Bun compiler Bus errors in compiled mode, (3) manual .env loading hack needed for compiled binaries. All tools run on the developer's machine, so Bun is always available.
+- Alternatives rejected: Keeping compiled binary with better rebuild automation — still has Bun compiler bugs and .env issues
+
+## 2026-02-25 - specflow-queue: advance DB phases to match existing artifacts
+- Decision: When `specflow-queue` detects existing spec artifacts on disk, automatically advance the specflow DB phase via `specflow phase <id> <phase>` for each completed phase
+- Rationale: Without this, the runner's prerequisite check blocks dispatch because the DB is at "none" while artifacts exist. Also auto-fixes spec_path entries ending in `.md` (should be directory, not file).
+- Alternatives rejected: Relaxing the prerequisite check in the runner — that check is a safety net against stale retries
+
+## 2026-02-25 - Add PR merge handler to fire-and-forget dispatch-worker
+- Decision: Added `parsePRMergeMeta`/`runPRMerge` to dispatch-worker.ts (matching scheduler.ts)
+- Rationale: Merge work items in fire-and-forget mode fell through to generic Claude launcher → "Credit balance is too low". PR merges only need `gh pr merge` (no Claude at all).
+- Alternatives rejected: Routing all merges through synchronous dispatch — fire-and-forget is the normal path
+
 ## 2026-02-25 - Add rework and code_review to content filter TRUSTED_SOURCES
 - Decision: Added `'rework'` and `'code_review'` to `TRUSTED_SOURCES` in `ivy-blackboard/src/ingestion.ts`
 - Rationale: After fixing auth, review agents posted successfully but writing rework work items to blackboard failed — `source: 'rework'` triggered the content filter. Review summaries contain camelCase code identifiers (`setMetricsReporter`, `DbMetricsQueryAdapter`) that false-positive the base64 detector. These are internal pipeline sources (not external user content) and should be trusted.

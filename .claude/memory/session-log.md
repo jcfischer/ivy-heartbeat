@@ -1,5 +1,10 @@
 # Session Log
 
+## 2026-02-25 (session 3) - Binary→wrapper, specflow-queue fix, dispatch-worker merge handler
+- Accomplished: Replaced compiled binaries with shell wrappers for all 3 projects (ivy-heartbeat, specflow, ivy-blackboard); fixed specflow-queue to advance DB phases when artifacts exist on disk and auto-fix file-path spec_path; added PR merge handler to fire-and-forget dispatch-worker; F-102 plan phase completed, tasks phase dispatched; Bun Bus error crash was a runtime bug (not our code)
+- Pending: F-102 plan-retry1 released (was stuck from Bun crash) — will be re-dispatched
+- Blockers: None
+
 ## 2026-02-25 (session 2) - OAuth empty-string fix + content filter trusted sources
 - Accomplished: Fixed ANTHROPIC_API_KEY suppression — empty string `''` is correct (not `undefined`); added `rework` and `code_review` to TRUSTED_SOURCES in ivy-blackboard; PR #13 full cycle verified: review → rework → re-review (approved) → merge work item created; 2 commits pushed (`fad6443` ivy-heartbeat, `75ef4da` ivy-blackboard)
 - Pending: Merge work item for PR #13 available for next dispatch cycle
