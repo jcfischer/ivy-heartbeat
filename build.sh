@@ -1,22 +1,20 @@
 #!/bin/bash
 set -euo pipefail
 
-BINARY_NAME="ivy-heartbeat"
-DIST_DIR="dist"
+# ivy-heartbeat runs directly via Bun (no compiled binary).
+# This script installs a shell wrapper to ~/bin/ivy-heartbeat.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="${HOME}/bin"
 
-echo "Building ${BINARY_NAME}..."
-mkdir -p "${DIST_DIR}"
-bun build src/cli.ts --compile --outfile "${DIST_DIR}/${BINARY_NAME}"
-
-echo "Signing binary (ad-hoc)..."
-xattr -cr "${DIST_DIR}/${BINARY_NAME}" 2>/dev/null || true
-codesign -f -s - "${DIST_DIR}/${BINARY_NAME}"
-
-echo "Installing to ${INSTALL_DIR}/${BINARY_NAME}..."
 mkdir -p "${INSTALL_DIR}"
-cp "${DIST_DIR}/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}"
-xattr -cr "${INSTALL_DIR}/${BINARY_NAME}" 2>/dev/null || true
-codesign -f -s - "${INSTALL_DIR}/${BINARY_NAME}"
 
-echo "Done. $(${INSTALL_DIR}/${BINARY_NAME} --version)"
+cat > "${INSTALL_DIR}/ivy-heartbeat" << WRAPPER
+#!/bin/bash
+exec bun ${SCRIPT_DIR}/src/cli.ts "\$@"
+WRAPPER
+
+chmod +x "${INSTALL_DIR}/ivy-heartbeat"
+
+echo "Installed ivy-heartbeat wrapper → ${INSTALL_DIR}/ivy-heartbeat"
+echo "Version: $(${INSTALL_DIR}/ivy-heartbeat --version)"

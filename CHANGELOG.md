@@ -8,7 +8,10 @@ All notable changes to ivy-heartbeat are documented here.
 - **Implement→complete phase pipeline** — `implement` and `complete` are now separate chained phases; PR creation and review dispatch happen in the `complete` phase after specflow validation
 - **`hasCommitsAhead()` check** — skips push/PR when branch has no new commits vs base
 - **`--head` flag for `gh pr create`** — fixes branch detection in git worktrees
-- **`.env` loading for compiled binaries** — manual `.env` parsing at startup since Bun only auto-loads in dev mode
+- **`specflow-queue` DB phase advancement** — automatically advances specflow DB phases to match existing artifacts on disk, and fixes spec_path entries that point to files instead of directories
+
+### Changed
+- **Replaced compiled binary with shell wrapper** — `~/bin/ivy-heartbeat` now calls `bun src/cli.ts` directly, eliminating binary-out-of-date bugs, Bun compiler crashes, and manual `.env` loading hacks
 
 ### Fixed
 - Suppress `ANTHROPIC_API_KEY` with empty string `''` in subprocess env to force OAuth authentication — prevents Bun's `--compile-autoload-dotenv` from loading depleted keys from target project `.env` files
