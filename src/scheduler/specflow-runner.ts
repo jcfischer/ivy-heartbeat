@@ -857,6 +857,23 @@ async function runPhaseViaLauncher(
   }
 
   // Step 2: Parse the prompt from the output file
+  // If specflow exited 0 but no prompt file exists, the phase artifact already
+  // exists (specflow said "already complete"). Just advance the DB phase.
+  if (!existsSync(promptFile)) {
+    bb.appendEvent({
+      actorId: sessionId,
+      targetId: item.item_id,
+      summary: `Phase ${phase} artifact already exists for ${featureId}, advancing DB phase`,
+      metadata: { phase, featureId },
+    });
+    const phaseResult = await spawner(['phase', featureId, phase], worktreePath, 10_000);
+    return {
+      exitCode: phaseResult.exitCode,
+      stdout: sfResult.stdout,
+      stderr: phaseResult.exitCode !== 0 ? phaseResult.stderr : '',
+    };
+  }
+
   let promptData: { prompt: string; systemPrompt?: string };
   try {
     const raw = readFileSync(promptFile, 'utf-8');
@@ -983,10 +1000,8 @@ async function checkQualityGate(
     120_000 // 2 minute timeout for eval
   );
 
-  if (result.exitCode !== 0) {
-    return { passed: false, score: 0, feedback: `Eval failed (exit ${result.exitCode}): ${result.stderr || result.stdout}` };
-  }
-
+  // specflow eval exits with code 1 when score is below threshold (not a crash).
+  // Always try to parse JSON output first — only treat as total failure if unparseable.
   try {
     const evalOutput = JSON.parse(result.stdout);
     // specflow eval --json returns { results: [{ passed, score, output }], ... }
@@ -1001,6 +1016,10 @@ async function checkQualityGate(
       feedback: typeof feedback === 'string' ? feedback : JSON.stringify(feedback),
     };
   } catch {
+    // JSON parse failed — this is a real eval failure (crash, timeout, etc.)
+    if (result.exitCode !== 0) {
+      return { passed: false, score: 0, feedback: `Eval failed (exit ${result.exitCode}): ${result.stderr || result.stdout}` };
+    }
     return { passed: false, score: 0, feedback: `Failed to parse eval output: ${result.stdout}` };
   }
 }

@@ -101,11 +101,11 @@ export function buildReviewPrompt(ctx: ReviewContext): string {
     '   HARD RULE: Any code duplication or redundant implementations MUST result in changes_requested.',
     '   Even minor duplication is not acceptable — request extraction to shared code before approving.',
     '',
-    '2. Output a structured summary:',
-    '   REVIEW_RESULT: approved | changes_requested',
-    '   FINDINGS_COUNT: N',
-    '   SEVERITY: low | medium | high | critical',
-    '   SUMMARY: One paragraph summary',
+    '2. Output a structured summary (replace placeholders with actual values):',
+    '   REVIEW_RESULT: <approved or changes_requested>',
+    '   FINDINGS_COUNT: <number>',
+    '   SEVERITY: <low or medium or high or critical>',
+    '   SUMMARY: <one paragraph summary>',
     '',
     'IMPORTANT: You must NEVER merge the PR. You must NEVER modify any code. You only review and comment.',
   );
@@ -122,16 +122,24 @@ export function parseReviewResult(output: string): {
   severity: string;
   summary: string;
 } {
-  const statusMatch = output.match(/REVIEW_RESULT:\s*(approved|changes_requested)/i);
-  const countMatch = output.match(/FINDINGS_COUNT:\s*(\d+)/i);
-  const severityMatch = output.match(/SEVERITY:\s*(\w+)/i);
-  const summaryMatch = output.match(/SUMMARY:\s*(.+)/i);
+  // Use matchAll to find the LAST occurrence of each field.
+  // The agent's stdout may contain the prompt template (which has example values)
+  // followed by the actual output. We want the last match — the agent's real answer.
+  const statusMatches = [...output.matchAll(/REVIEW_RESULT:\s*(approved|changes_requested)/gi)];
+  const countMatches = [...output.matchAll(/FINDINGS_COUNT:\s*(\d+)/gi)];
+  const severityMatches = [...output.matchAll(/SEVERITY:\s*(\w+)/gi)];
+  const summaryMatches = [...output.matchAll(/SUMMARY:\s*(.+)/gi)];
+
+  const lastStatus = statusMatches.at(-1);
+  const lastCount = countMatches.at(-1);
+  const lastSeverity = severityMatches.at(-1);
+  const lastSummary = summaryMatches.at(-1);
 
   return {
-    status: (statusMatch?.[1]?.toLowerCase() as 'approved' | 'changes_requested') ?? 'unknown',
-    findingsCount: countMatch ? parseInt(countMatch[1], 10) : 0,
-    severity: severityMatch?.[1] ?? 'unknown',
-    summary: summaryMatch?.[1] ?? 'No summary available',
+    status: (lastStatus?.[1]?.toLowerCase() as 'approved' | 'changes_requested') ?? 'unknown',
+    findingsCount: lastCount ? parseInt(lastCount[1], 10) : 0,
+    severity: lastSeverity?.[1] ?? 'unknown',
+    summary: lastSummary?.[1] ?? 'No summary available',
   };
 }
 

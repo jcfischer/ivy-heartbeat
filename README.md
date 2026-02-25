@@ -88,11 +88,24 @@ ivy-heartbeat
 │   │   ├── plist.ts           # Plist XML generation
 │   │   └── launchctl.ts       # launchctl load/unload/isLoaded
 │   │
+│   ├── scheduler/              # Autonomous dispatch pipeline
+│   │   ├── scheduler.ts        # Work item dispatch: claim → execute → complete
+│   │   ├── launcher.ts         # Claude Code launcher with Max OAuth auth
+│   │   ├── specflow-runner.ts  # SpecFlow phase orchestration (specify→plan→tasks→implement→complete)
+│   │   ├── specflow-types.ts   # SpecFlow metadata types
+│   │   ├── review-agent.ts     # AI code review agent dispatch + result parsing
+│   │   ├── rework.ts           # Rework cycle management (review→fix→re-review)
+│   │   ├── pr-merge.ts         # Post-review PR merge automation
+│   │   ├── merge-fix.ts        # Merge conflict resolution agent
+│   │   ├── pr-comments.ts      # GitHub PR comment fetching for rework feedback
+│   │   ├── worktree.ts         # Git worktree lifecycle management
+│   │   └── types.ts            # Scheduler types
+│   │
 │   └── repositories/          # Query repositories
 │       ├── events.ts          # getRecent, getSince, getByType, search
 │       └── heartbeats.ts      # getLatest, getRecent, getBySession
 │
-└── test/                      # 214 tests across 15 files
+└── test/                      # 443 tests across 29 files
 ```
 
 ## CLI Commands
@@ -116,6 +129,11 @@ ivy-heartbeat
 | `serve` | Web dashboard at localhost:7878 |
 | `agent register` | Register a new agent session |
 | `agent list` | Show active agents |
+| `dispatch` | Dispatch pending work items to Claude Code agents |
+| `dispatch --timeout <min>` | Per-item timeout (default: 10 min) |
+| `dispatch --max <n>` | Max items to dispatch per run |
+| `work list` | List work items with status |
+| `work show <id>` | Show work item details |
 
 Global flags: `--json`, `--db <path>`
 
@@ -190,6 +208,28 @@ Serves a self-contained HTML dashboard at `http://localhost:7878` with:
 - FTS5 search interface
 
 API endpoints: `/api/events`, `/api/heartbeats`, `/api/summary`, `/api/search?q=`
+
+## Autonomous Dispatch Pipeline
+
+The scheduler dispatches work items from the blackboard to Claude Code agents:
+
+```
+Claim work item → Create worktree → Launch agent → Post-agent git ops → Code review → Merge/Rework
+```
+
+**Work item types:**
+- **GitHub issues** — Auto-creates branch, worktree, PR, and code review
+- **SpecFlow features** — Orchestrates specify → plan → tasks → implement → complete phases with quality gates
+- **Code reviews** — AI review agent evaluates PRs against specs, approves or requests changes
+- **Rework** — Addresses review feedback, pushes fixes, triggers re-review (max 2 cycles)
+- **PR merge** — Merges approved PRs after successful review
+- **Merge-fix** — Resolves merge conflicts when PRs can't cleanly merge
+
+**SpecFlow integration:**
+- Phases `specify`, `plan`, `tasks` route through Max OAuth launcher (no API credits)
+- `implement` phase uses Claude Code with full MCP access in an isolated worktree
+- `complete` phase creates PR and triggers the review pipeline
+- Quality gates evaluate plan/spec quality with model-based rubric grading (80% threshold)
 
 ## Dependencies
 

@@ -1,5 +1,24 @@
 #!/usr/bin/env bun
 
+// Load .env for compiled binaries (Bun only auto-loads .env in dev mode)
+import { readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+for (const dir of [process.cwd(), join(process.env.HOME ?? '', 'work', 'ivy-heartbeat')]) {
+  const envPath = join(dir, '.env');
+  if (existsSync(envPath)) {
+    for (const line of readFileSync(envPath, 'utf-8').split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eqIdx = trimmed.indexOf('=');
+      if (eqIdx === -1) continue;
+      const key = trimmed.slice(0, eqIdx).trim();
+      const value = trimmed.slice(eqIdx + 1).trim().replace(/^["']|["']$/g, '');
+      if (!process.env[key]) process.env[key] = value;
+    }
+    break;
+  }
+}
+
 import { Command } from 'commander';
 import { Blackboard } from './blackboard.ts';
 import { registerAgentCommands } from './commands/agent.ts';
