@@ -124,6 +124,8 @@ export async function runPRMerge(
 ): Promise<void> {
   const merged = await mergePR(project.local_path, meta.pr_number);
 
+  let shouldCreateReflect = false;
+
   if (merged) {
     // Pull merged changes into local main
     try {
@@ -151,17 +153,7 @@ export async function runPRMerge(
       metadata: { prNumber: meta.pr_number, merged: true },
     });
 
-    // Create reflect work item for lesson extraction
-    createReflectWorkItem(bb, {
-      projectId: meta.project_id,
-      implementationWorkItemId: meta.implementation_work_item_id,
-      prNumber: meta.pr_number,
-      prUrl: meta.pr_url,
-      originalTitle: item.title.replace(/^Merge approved PR #\d+ - /, ''),
-      sessionId,
-    });
-
-    return;
+    shouldCreateReflect = true;
   }
 
   // Check if the PR was actually merged despite the gh merge command failing
@@ -177,7 +169,11 @@ export async function runPRMerge(
       metadata: { prNumber: meta.pr_number, prState: 'MERGED' },
     });
 
-    // Create reflect work item for lesson extraction (PR was already merged)
+    shouldCreateReflect = true;
+  }
+
+  // Create reflect work item for lesson extraction if PR was merged
+  if (shouldCreateReflect) {
     createReflectWorkItem(bb, {
       projectId: meta.project_id,
       implementationWorkItemId: meta.implementation_work_item_id,
