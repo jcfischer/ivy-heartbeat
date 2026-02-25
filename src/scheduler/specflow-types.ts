@@ -25,7 +25,7 @@ export const PHASE_TRANSITIONS: Record<SpecFlowPhase, SpecFlowPhase | null> = {
   specify: 'plan',
   plan: 'tasks',
   tasks: 'implement',
-  implement: null,
+  implement: 'complete',
   complete: null,
 };
 

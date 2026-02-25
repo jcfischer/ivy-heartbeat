@@ -580,7 +580,9 @@ describe('specflow-runner', () => {
         'test-session'
       );
 
-      expect(result).toEqual({ status: 'failed' });
+      // Complete failures still proceed to PR creation (handleCompletePhase)
+      // — with no commits ahead, it skips PR and returns completed
+      expect(result).toEqual({ status: 'completed', nextPhase: undefined });
     });
 
     test('returns false when retry fails after artifact generation', async () => {
@@ -618,8 +620,8 @@ describe('specflow-runner', () => {
         'test-session'
       );
 
-      // Should fail because retry also fails
-      expect(result).toEqual({ status: 'failed' });
+      // Complete failures still proceed to PR creation — with no commits, returns completed
+      expect(result).toEqual({ status: 'completed', nextPhase: undefined });
     });
 
     test('returns false when complete fails for non-artifact reason', async () => {
@@ -647,8 +649,8 @@ describe('specflow-runner', () => {
         'test-session'
       );
 
-      // Should fail — no artifact generation attempted
-      expect(result).toEqual({ status: 'failed' });
+      // Complete failures still proceed to PR creation — with no commits, returns completed
+      expect(result).toEqual({ status: 'completed', nextPhase: undefined });
     });
   });
 

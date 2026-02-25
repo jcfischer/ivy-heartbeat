@@ -657,7 +657,8 @@ export async function dispatch(
                   worktreePath,
                   `Fix #${ghMeta.issueNumber}: ${item.title}`,
                   prBody,
-                  mainBranch
+                  mainBranch,
+                  branch
                 );
 
                 bb.appendEvent({

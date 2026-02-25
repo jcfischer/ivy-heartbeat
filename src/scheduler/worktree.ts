@@ -381,6 +381,29 @@ export async function commitAll(
 }
 
 /**
+ * Check whether the current branch has commits ahead of the given base branch.
+ */
+export async function hasCommitsAhead(
+  worktreePath: string,
+  baseBranch: string
+): Promise<boolean> {
+  try {
+    // Fetch first so origin/baseBranch is up to date
+    try { await git(['fetch', 'origin'], worktreePath); } catch { /* no remote */ }
+    const log = await git(['log', `origin/${baseBranch}..HEAD`, '--oneline'], worktreePath);
+    return log.trim().length > 0;
+  } catch {
+    // If the base doesn't exist on origin, check against local
+    try {
+      const log = await git(['log', `${baseBranch}..HEAD`, '--oneline'], worktreePath);
+      return log.trim().length > 0;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/**
  * Push the branch to origin.
  */
 export async function pushBranch(
@@ -397,18 +420,19 @@ export async function createPR(
   worktreePath: string,
   title: string,
   body: string,
-  base: string
+  base: string,
+  head?: string
 ): Promise<{ number: number; url: string }> {
   // gh pr create outputs the PR URL to stdout (no --json support)
-  const url = await gh(
-    [
-      'pr', 'create',
-      '--title', title,
-      '--body', body,
-      '--base', base,
-    ],
-    worktreePath
-  );
+  const args = [
+    'pr', 'create',
+    '--title', title,
+    '--body', body,
+    '--base', base,
+  ];
+  // Worktrees confuse gh's branch auto-detection — pass --head explicitly
+  if (head) args.push('--head', head);
+  const url = await gh(args, worktreePath);
 
   // Extract PR number from URL: https://github.com/owner/repo/pull/123
   const match = url.match(/\/pull\/(\d+)$/);

@@ -29,6 +29,7 @@ import {
   pushBranch,
   createPR,
   getCurrentBranch,
+  hasCommitsAhead,
   isCleanBranch,
   getDiffSummary,
 } from './worktree.ts';
@@ -98,6 +99,7 @@ export interface WorktreeOps {
   pushBranch: typeof pushBranch;
   createPR: typeof createPR;
   getCurrentBranch: typeof getCurrentBranch;
+  hasCommitsAhead: typeof hasCommitsAhead;
   isCleanBranch: typeof isCleanBranch;
   getDiffSummary: typeof getDiffSummary;
 }
@@ -110,6 +112,7 @@ const defaultWorktreeOps: WorktreeOps = {
   pushBranch,
   createPR,
   getCurrentBranch,
+  hasCommitsAhead,
   isCleanBranch,
   getDiffSummary,
 };
@@ -542,29 +545,29 @@ export async function runSpecFlowPhase(
             bb.appendEvent({
               actorId: sessionId,
               targetId: item.item_id,
-              summary: `SpecFlow complete still failed after artifact generation (exit ${retryResult.exitCode})`,
+              summary: `SpecFlow complete still failed after artifact generation (exit ${retryResult.exitCode}) — proceeding to PR anyway`,
               metadata: { phase, exitCode: retryResult.exitCode, stderr: retryResult.stderr.slice(0, 500) },
             });
-            return { status: 'failed' };
+            // Fall through — still push/PR so code gets reviewed
           }
         } else {
           bb.appendEvent({
             actorId: sessionId,
             targetId: item.item_id,
-            summary: `Failed to generate missing artifacts for ${featureId} — aborting complete`,
+            summary: `Failed to generate missing artifacts for ${featureId} — proceeding to PR anyway`,
             metadata: { phase, missingArtifacts },
           });
-          return { status: 'failed' };
+          // Fall through — still push/PR so code gets reviewed
         }
       } else {
-        // Complete failed for a non-artifact reason
+        // Complete failed for a non-artifact reason (e.g., test coverage, failing tests)
+        // Still proceed — push/PR so the code gets reviewed
         bb.appendEvent({
           actorId: sessionId,
           targetId: item.item_id,
-          summary: `SpecFlow phase "${phase}" failed (exit ${result.exitCode}) for ${featureId}`,
+          summary: `SpecFlow complete validation failed for ${featureId} — creating PR for review`,
           metadata: { phase, exitCode: result.exitCode, stderr: result.stderr.slice(0, 500) },
         });
-        return { status: 'failed' };
       }
     } else {
       bb.appendEvent({
@@ -777,9 +780,14 @@ export async function runSpecFlowPhase(
     });
   }
 
-  // ─── Implement phase: git ops ────────────────────────────────────
+  // ─── Implement phase: commit changes ────────────────────────────
   if (phase === 'implement') {
-    await handleImplementPhase(bb, item, meta, worktreePath, branch, mainBranch, sessionId, project.local_path, project.remote_repo);
+    await handleImplementPhase(bb, item, meta, worktreePath, sessionId);
+  }
+
+  // ─── Complete phase: push branch & create PR ──────────────────
+  if (phase === 'complete') {
+    await handleCompletePhase(bb, item, meta, worktreePath, mainBranch, sessionId, project.local_path, project.remote_repo);
   }
 
   // ─── Chain next phase ────────────────────────────────────────────
@@ -1280,7 +1288,37 @@ async function handleImplementPhase(
   item: BlackboardWorkItem,
   meta: SpecFlowWorkItemMetadata,
   worktreePath: string,
-  branch: string,
+  sessionId: string,
+): Promise<void> {
+  const featureId = meta.specflow_feature_id;
+
+  // Commit implementation changes — complete phase handles push/PR
+  const sha = await worktreeOps.commitAll(worktreePath, `feat(specflow): ${featureId} implementation`);
+
+  if (sha) {
+    bb.appendEvent({
+      actorId: sessionId,
+      targetId: item.item_id,
+      summary: `Committed implementation changes for ${featureId}`,
+      metadata: { featureId, commitSha: sha },
+    });
+  } else {
+    bb.appendEvent({
+      actorId: sessionId,
+      targetId: item.item_id,
+      summary: `No new changes to commit for ${featureId} — chaining to complete phase`,
+      metadata: { featureId },
+    });
+  }
+}
+
+// ─── Complete phase handling ──────────────────────────────────────────
+
+async function handleCompletePhase(
+  bb: Blackboard,
+  item: BlackboardWorkItem,
+  meta: SpecFlowWorkItemMetadata,
+  worktreePath: string,
   mainBranch: string,
   sessionId: string,
   projectPath: string,
@@ -1288,48 +1326,30 @@ async function handleImplementPhase(
 ): Promise<void> {
   const featureId = meta.specflow_feature_id;
 
-  // Check if there are changes to commit
-  const sha = await worktreeOps.commitAll(worktreePath, `feat(specflow): ${featureId} implementation`);
-
-  if (!sha) {
+  // Commit any artifacts created by `specflow complete` (docs.md, verify.md, etc.)
+  const sha = await worktreeOps.commitAll(worktreePath, `chore(specflow): ${featureId} completion artifacts`);
+  if (sha) {
     bb.appendEvent({
       actorId: sessionId,
       targetId: item.item_id,
-      summary: `No changes to commit for ${featureId} — completing without PR`,
-      metadata: { featureId },
+      summary: `Committed completion artifacts for ${featureId}`,
+      metadata: { featureId, commitSha: sha },
     });
-    return;
   }
 
-  // ─── Run specflow complete BEFORE creating PR ───────────────────
-  // Validates that all artifacts (docs.md, verify.md) are present and
-  // marks the feature as complete in the specflow DB. This ensures the
-  // PR is only created for fully validated features.
-  try {
-    const completeResult = await spawner(['complete', featureId], worktreePath, 60_000);
-    if (completeResult.exitCode === 0) {
-      bb.appendEvent({
-        actorId: sessionId,
-        targetId: item.item_id,
-        summary: `SpecFlow complete passed for ${featureId} — proceeding to PR creation`,
-        metadata: { featureId },
-      });
-    } else {
-      bb.appendEvent({
-        actorId: sessionId,
-        targetId: item.item_id,
-        summary: `SpecFlow complete failed (exit ${completeResult.exitCode}) for ${featureId} — creating PR anyway for review`,
-        metadata: { featureId, exitCode: completeResult.exitCode, stderr: completeResult.stderr.slice(0, 500) },
-      });
-    }
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
+  // Detect the actual branch name (implementation agent may rename it)
+  const branch = await worktreeOps.getCurrentBranch(worktreePath);
+
+  // Check if there are commits ahead of main to push
+  const hasCommits = await worktreeOps.hasCommitsAhead(worktreePath, mainBranch);
+  if (!hasCommits) {
     bb.appendEvent({
       actorId: sessionId,
       targetId: item.item_id,
-      summary: `SpecFlow complete error for ${featureId}: ${msg} — creating PR anyway`,
-      metadata: { featureId, error: msg },
+      summary: `No commits ahead of ${mainBranch} for ${featureId} — skipping PR`,
+      metadata: { featureId, branch },
     });
+    return;
   }
 
   // Push and create PR
@@ -1346,16 +1366,17 @@ async function handleImplementPhase(
 
   const pr = await worktreeOps.createPR(
     worktreePath,
-    `feat(specflow): ${featureId} ${item.title.replace(/^SpecFlow implement: /, '')}`,
+    `feat(specflow): ${featureId} ${item.title.replace(/^SpecFlow (?:implement|complete): /, '')}`,
     prBody,
-    mainBranch
+    mainBranch,
+    branch
   );
 
   bb.appendEvent({
     actorId: sessionId,
     targetId: item.item_id,
     summary: `Created PR #${pr.number} for ${featureId}`,
-    metadata: { prNumber: pr.number, prUrl: pr.url, commitSha: sha },
+    metadata: { prNumber: pr.number, prUrl: pr.url, branch },
   });
 
   // Create code review work item for the feature PR
