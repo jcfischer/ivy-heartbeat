@@ -13,3 +13,4 @@ dist/
 ivy-heartbeat
 *.log
 *.plist
+.specflow
