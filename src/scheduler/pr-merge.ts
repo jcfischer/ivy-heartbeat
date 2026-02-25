@@ -2,6 +2,7 @@ import type { Blackboard } from '../blackboard.ts';
 import type { BlackboardProject, BlackboardWorkItem } from 'ivy-blackboard/src/types';
 import { mergePR, pullMain, getPRState } from './worktree.ts';
 import { createMergeFixWorkItem } from './merge-fix.ts';
+import type { ReflectMetadata } from '../reflect/types.ts';
 
 /**
  * Metadata shape for post-review PR merge work items.
@@ -149,6 +150,17 @@ export async function runPRMerge(
       summary: `Merged PR #${meta.pr_number} (squash + delete branch)`,
       metadata: { prNumber: meta.pr_number, merged: true },
     });
+
+    // Create reflect work item for lesson extraction
+    createReflectWorkItem(bb, {
+      projectId: meta.project_id,
+      implementationWorkItemId: meta.implementation_work_item_id,
+      prNumber: meta.pr_number,
+      prUrl: meta.pr_url,
+      originalTitle: item.title.replace(/^Merge approved PR #\d+ - /, ''),
+      sessionId,
+    });
+
     return;
   }
 
@@ -164,6 +176,17 @@ export async function runPRMerge(
       summary: `PR #${meta.pr_number} already merged — skipping merge-fix`,
       metadata: { prNumber: meta.pr_number, prState: 'MERGED' },
     });
+
+    // Create reflect work item for lesson extraction (PR was already merged)
+    createReflectWorkItem(bb, {
+      projectId: meta.project_id,
+      implementationWorkItemId: meta.implementation_work_item_id,
+      prNumber: meta.pr_number,
+      prUrl: meta.pr_url,
+      originalTitle: item.title.replace(/^Merge approved PR #\d+ - /, ''),
+      sessionId,
+    });
+
     return;
   }
 
@@ -185,4 +208,61 @@ export async function runPRMerge(
     summary: `PR #${meta.pr_number} merge failed — created merge-fix recovery item ${mergeFixId}`,
     metadata: { prNumber: meta.pr_number, mergeFixItemId: mergeFixId },
   });
+}
+
+/**
+ * Create a reflect work item after successful PR merge.
+ * Called when a PR merge completes successfully to trigger lesson extraction.
+ *
+ * Returns the created work item ID.
+ */
+export function createReflectWorkItem(
+  bb: Blackboard,
+  opts: {
+    projectId: string;
+    implementationWorkItemId: string;
+    prNumber: number;
+    prUrl: string;
+    originalTitle: string;
+    sessionId?: string;
+  }
+): string {
+  const itemId = `reflect-${opts.projectId}-pr-${opts.prNumber}`;
+  const title = `Reflect on PR #${opts.prNumber} - ${opts.originalTitle}`;
+
+  const description = [
+    `Extract lessons from completed implementation cycle.`,
+    '',
+    `- **PR URL:** ${opts.prUrl}`,
+    `- **Implementation Work Item:** ${opts.implementationWorkItemId}`,
+    `- **Project:** ${opts.projectId}`,
+  ].join('\n');
+
+  const metadata: ReflectMetadata = {
+    reflect: true,
+    project_id: opts.projectId,
+    implementation_work_item_id: opts.implementationWorkItemId,
+    pr_number: opts.prNumber,
+    pr_url: opts.prUrl,
+  };
+
+  bb.createWorkItem({
+    id: itemId,
+    title,
+    description,
+    project: opts.projectId,
+    priority: 'P2',
+    source: 'reflect',
+    sourceRef: opts.prUrl,
+    metadata: JSON.stringify(metadata),
+  });
+
+  bb.appendEvent({
+    actorId: opts.sessionId,
+    targetId: opts.implementationWorkItemId,
+    summary: `Created reflect work item "${itemId}" for lesson extraction`,
+    metadata: { reflectItemId: itemId, prNumber: opts.prNumber },
+  });
+
+  return itemId;
 }

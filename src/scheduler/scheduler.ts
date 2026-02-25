@@ -24,6 +24,7 @@ import { parseMergeFixMeta, runMergeFix } from './merge-fix.ts';
 import { parsePRMergeMeta, runPRMerge } from './pr-merge.ts';
 import { parseReworkMeta, runRework } from './rework.ts';
 import { dispatchReviewAgent } from './review-agent.ts';
+import { parseReflectMeta, runReflect } from './reflect.ts';
 import type {
   DispatchOptions,
   DispatchResult,
@@ -583,6 +584,57 @@ export async function dispatch(
           bb.deregisterAgent(sessionId);
         }
         continue;
+      }
+
+      // Determine if this is a reflect work item
+      try {
+        const reflectMeta = parseReflectMeta(JSON.parse(item.metadata || '{}'));
+        if (reflectMeta && project) {
+          try {
+            await runReflect(bb.db, reflectMeta);
+            bb.completeWorkItem(item.item_id, sessionId);
+            const durationMs = Date.now() - startTime;
+
+            bb.appendEvent({
+              actorId: sessionId,
+              targetId: item.item_id,
+              summary: `Reflect phase completed for PR #${reflectMeta.pr_number} (${Math.round(durationMs / 1000)}s)`,
+              metadata: { prNumber: reflectMeta.pr_number, durationMs },
+            });
+
+            result.dispatched.push({
+              itemId: item.item_id,
+              title: item.title,
+              projectId: item.project_id!,
+              sessionId,
+              exitCode: 0,
+              completed: true,
+              durationMs,
+            });
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            const durationMs = Date.now() - startTime;
+            try { bb.releaseWorkItem(item.item_id, sessionId); } catch { /* best effort */ }
+
+            bb.appendEvent({
+              actorId: sessionId,
+              targetId: item.item_id,
+              summary: `Reflect phase failed for PR #${reflectMeta.pr_number}: ${msg}`,
+              metadata: { error: msg, durationMs },
+            });
+
+            result.errors.push({
+              itemId: item.item_id,
+              title: item.title,
+              error: `Reflect failed: ${msg}`,
+            });
+          } finally {
+            bb.deregisterAgent(sessionId);
+          }
+          continue;
+        }
+      } catch {
+        // Not a reflect work item - proceed to generic handler
       }
 
       const prompt = buildPrompt(item, sessionId);
