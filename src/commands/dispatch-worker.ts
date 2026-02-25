@@ -24,6 +24,8 @@ import { parseMergeFixMeta, createMergeFixWorkItem, runMergeFix } from '../sched
 import { parsePRMergeMeta, runPRMerge } from '../scheduler/pr-merge.ts';
 import { parseReworkMeta, runRework } from '../scheduler/rework.ts';
 import { dispatchReviewAgent } from '../scheduler/review-agent.ts';
+import { parseReflectMeta, runReflect } from '../scheduler/reflect.ts';
+import { handleReflectWorkItem } from '../scheduler/reflect-handler.ts';
 import { getTanaAccessor } from '../evaluators/tana-accessor.ts';
 
 /**
@@ -504,6 +506,18 @@ export function registerDispatchWorkerCommand(
           try { bb.deregisterAgent(sessionId); } catch { /* best effort */ }
         }
         return;
+      }
+
+      // Determine if this is a reflect work item (lesson extraction)
+      try {
+        if (project && await handleReflectWorkItem(bb, item, sessionId, (progress) => {
+          bb.sendHeartbeat({ sessionId, progress, workItemId: itemId });
+        })) {
+          bb.deregisterAgent(sessionId);
+          return;
+        }
+      } catch {
+        // Not a reflect work item - proceed to next handler
       }
 
       // Determine if this is a code_review work item (dispatch review agent)

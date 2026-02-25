@@ -24,6 +24,8 @@ import { parseMergeFixMeta, runMergeFix } from './merge-fix.ts';
 import { parsePRMergeMeta, runPRMerge } from './pr-merge.ts';
 import { parseReworkMeta, runRework } from './rework.ts';
 import { dispatchReviewAgent } from './review-agent.ts';
+import { parseReflectMeta, runReflect } from './reflect.ts';
+import { handleReflectWorkItem } from './reflect-handler.ts';
 import type {
   DispatchOptions,
   DispatchResult,
@@ -583,6 +585,26 @@ export async function dispatch(
           bb.deregisterAgent(sessionId);
         }
         continue;
+      }
+
+      // Determine if this is a reflect work item
+      try {
+        if (project && await handleReflectWorkItem(bb, item, sessionId)) {
+          const durationMs = Date.now() - startTime;
+          result.dispatched.push({
+            itemId: item.item_id,
+            title: item.title,
+            projectId: item.project_id!,
+            sessionId,
+            exitCode: 0,
+            completed: true,
+            durationMs,
+          });
+          bb.deregisterAgent(sessionId);
+          continue;
+        }
+      } catch {
+        // Not a reflect work item - proceed to generic handler
       }
 
       const prompt = buildPrompt(item, sessionId);

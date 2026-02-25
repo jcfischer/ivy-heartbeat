@@ -115,6 +115,12 @@ export function buildReviewPrompt(ctx: ReviewContext): string {
 
 /**
  * Parse review result from agent output.
+ *
+ * Preprocessing handles two failure modes:
+ * 1. Agent wraps field names in markdown bold: **REVIEW_RESULT:** changes_requested
+ *    → strip ** so the regex can match
+ * 2. Prompt template bleeds through with placeholder: REVIEW_RESULT: <approved or changes_requested>
+ *    → strip <...> angle-bracket placeholders so the template doesn't false-match "approved"
  */
 export function parseReviewResult(output: string): {
   status: 'approved' | 'changes_requested' | 'unknown';
@@ -122,13 +128,18 @@ export function parseReviewResult(output: string): {
   severity: string;
   summary: string;
 } {
+  // Preprocess: strip markdown bold and angle-bracket placeholders
+  const cleaned = output
+    .replace(/\*\*/g, '')       // **REVIEW_RESULT:** → REVIEW_RESULT:
+    .replace(/<[^>]*>/g, '');   // <approved or changes_requested> → (empty)
+
   // Use matchAll to find the LAST occurrence of each field.
   // The agent's stdout may contain the prompt template (which has example values)
   // followed by the actual output. We want the last match — the agent's real answer.
-  const statusMatches = [...output.matchAll(/REVIEW_RESULT:\s*(approved|changes_requested)/gi)];
-  const countMatches = [...output.matchAll(/FINDINGS_COUNT:\s*(\d+)/gi)];
-  const severityMatches = [...output.matchAll(/SEVERITY:\s*(\w+)/gi)];
-  const summaryMatches = [...output.matchAll(/SUMMARY:\s*(.+)/gi)];
+  const statusMatches = [...cleaned.matchAll(/REVIEW_RESULT:\s*(approved|changes_requested)/gi)];
+  const countMatches = [...cleaned.matchAll(/FINDINGS_COUNT:\s*(\d+)/gi)];
+  const severityMatches = [...cleaned.matchAll(/SEVERITY:\s*(\w+)/gi)];
+  const summaryMatches = [...cleaned.matchAll(/SUMMARY:\s*(.+)/gi)];
 
   const lastStatus = statusMatches.at(-1);
   const lastCount = countMatches.at(-1);

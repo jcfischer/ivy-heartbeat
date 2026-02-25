@@ -623,6 +623,17 @@ export async function getDiffSummary(
 }
 
 /**
+ * Get list of changed file paths between base and HEAD.
+ */
+export async function getChangedFiles(
+  worktreePath: string,
+  base: string
+): Promise<string[]> {
+  const output = await git(['diff', '--name-only', `${base}...HEAD`], worktreePath);
+  return output.split('\n').filter(f => f.length > 0);
+}
+
+/**
  * Build the prompt for the commenter agent that will post an issue comment.
  */
 export function buildCommentPrompt(
