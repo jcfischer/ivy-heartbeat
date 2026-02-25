@@ -44,6 +44,8 @@ import {
 const MAX_RETRIES = 1;
 const QUALITY_THRESHOLD = 80;
 const SPECFLOW_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+const IMPLEMENT_TIMEOUT_MIN_MS = 30 * 60 * 1000; // 30 minutes minimum
+const IMPLEMENT_TIMEOUT_PER_TASK_MS = 3 * 60 * 1000; // +3 minutes per task
 
 // ─── Injectable specflow CLI runner (for testing) ─────────────────────
 
@@ -657,6 +659,36 @@ export async function runSpecFlowPhase(
   if (phase === 'implement' && result.stdout.trim()) {
     // Detect uncommitted changes from a previous failed attempt (GH-19)
     let implementPrompt = result.stdout.trim();
+
+    // Prepend coding-mode override to prevent PAI Algorithm ceremony from
+    // consuming the agent's time budget. The spec/plan/tasks in the prompt
+    // already capture requirements — no need for OBSERVE/THINK/PLAN phases.
+    const codingModePreamble = [
+      '## EXECUTION MODE: Direct Implementation',
+      '',
+      'You are a headless coding agent in a dispatch pipeline with a strict time budget.',
+      'The spec, plan, and tasks below ARE your requirements — they replace any ISC or reverse engineering.',
+      '',
+      'CRITICAL OVERRIDE — DO NOT:',
+      '- Use the PAI Algorithm format (no OBSERVE/THINK/PLAN/BUILD/EXECUTE/VERIFY/LEARN phase headers)',
+      '- Create Ideal State Criteria via TaskCreate',
+      '- Perform capability audits or reverse engineering',
+      '- Execute voice notification curl commands',
+      '- Enter plan mode (EnterPlanMode)',
+      '- Spawn research agents or councils',
+      '',
+      'INSTEAD — Go straight to coding:',
+      '1. Read the tasks below and work through them in order',
+      '2. For each task: read relevant code, write failing test, implement, verify',
+      '3. Run `bun test` after each significant change',
+      '4. Output [FEATURE COMPLETE], [FEATURE PARTIAL], or [FEATURE BLOCKED] when done',
+      '',
+      'Every minute spent on ceremony is a minute NOT spent writing code.',
+      '',
+      '---',
+      '',
+    ].join('\n');
+    implementPrompt = codingModePreamble + implementPrompt;
     const isClean = await worktreeOps.isCleanBranch(worktreePath);
 
     if (!isClean) {
@@ -706,11 +738,19 @@ export async function runSpecFlowPhase(
       });
     }
 
+    // Scale timeout based on task count in the prompt.
+    // Count "### T-" headers (standard specflow task format) in the prompt.
+    const taskCount = (implementPrompt.match(/^### T-/gm) || []).length;
+    const implementTimeoutMs = Math.max(
+      IMPLEMENT_TIMEOUT_MIN_MS,
+      taskCount * IMPLEMENT_TIMEOUT_PER_TASK_MS
+    );
+
     bb.appendEvent({
       actorId: sessionId,
       targetId: item.item_id,
-      summary: `Launching Claude to implement ${featureId}`,
-      metadata: { promptLength: implementPrompt.length, hasExistingChanges: !isClean },
+      summary: `Launching Claude to implement ${featureId} (${taskCount} tasks, ${Math.round(implementTimeoutMs / 60_000)}min timeout)`,
+      metadata: { promptLength: implementPrompt.length, hasExistingChanges: !isClean, taskCount, timeoutMs: implementTimeoutMs },
     });
 
     const launcher = getLauncher();
@@ -718,7 +758,7 @@ export async function runSpecFlowPhase(
       sessionId,
       prompt: implementPrompt,
       workDir: worktreePath,
-      timeoutMs: SPECFLOW_TIMEOUT_MS,
+      timeoutMs: implementTimeoutMs,
     });
 
     if (launchResult.exitCode !== 0) {

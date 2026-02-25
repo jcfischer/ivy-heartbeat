@@ -760,8 +760,9 @@ describe('specflow-runner', () => {
 
       // Prompt should NOT contain prior work context
       expect(launcherPrompt).not.toContain('Prior Implementation Work Detected');
-      // Original prompt should be passed through unchanged
-      expect(launcherPrompt).toBe(implementPrompt);
+      // Original prompt should be prepended with coding-mode preamble
+      expect(launcherPrompt).toContain('EXECUTION MODE: Direct Implementation');
+      expect(launcherPrompt).toContain(implementPrompt);
     });
   });
 
