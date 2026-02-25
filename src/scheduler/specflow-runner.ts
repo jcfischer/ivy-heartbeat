@@ -970,7 +970,10 @@ function buildCliArgs(
 ): string[] {
   switch (phase) {
     case 'specify':
-      return ['specify', featureId, '--batch'];
+      // Don't force --batch: specflow's headless mode auto-enables batch
+      // when rich decomposition data is available. Manually-added features
+      // lack decomposition data and fail with --batch.
+      return ['specify', featureId];
     case 'implement':
       return ['implement', '--feature', featureId];
     case 'complete':

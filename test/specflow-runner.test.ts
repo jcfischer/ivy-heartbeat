@@ -175,10 +175,10 @@ describe('specflow-runner', () => {
         'test-session'
       );
 
-      // Should have called specflow specify --batch (after init)
+      // Should have called specflow specify (no --batch; headless auto-enables batch when data available)
       const specifyCall = spawnerCalls.find((c) => c.args[0] === 'specify');
       expect(specifyCall).toBeDefined();
-      expect(specifyCall!.args).toEqual(['specify', 'F-001', '--batch']);
+      expect(specifyCall!.args).toEqual(['specify', 'F-001']);
 
       // Should have called eval
       const evalCall = spawnerCalls.find((c) => c.args[0] === 'eval');
