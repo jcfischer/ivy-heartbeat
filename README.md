@@ -228,8 +228,9 @@ Claim work item → Create worktree → Launch agent → Post-agent git ops → 
 **SpecFlow integration:**
 - Phases `specify`, `plan`, `tasks` route through Max OAuth launcher (no API credits)
 - `implement` phase uses Claude Code with full MCP access in an isolated worktree
-- `complete` phase creates PR and triggers the review pipeline
+- `complete` phase runs specflow validation, commits artifacts, pushes branch, creates PR, and triggers the review pipeline
 - Quality gates evaluate plan/spec quality with model-based rubric grading (80% threshold)
+- Complete phase validation failures don't block PR creation — code gets reviewed regardless
 
 ## Dependencies
 
@@ -257,6 +258,7 @@ Environment variables:
 - `SPECFLOW_BIN` — path to specflow binary (default: `~/bin/specflow`)
 - `IVY_WORKTREE_DIR` — base directory for git worktrees (default: `~/.pai/worktrees`)
 - `IVY_LOG_DIR` — directory for dispatch agent logs (default: `~/.pai/blackboard/logs`)
+- `CLAUDE_CODE_OAUTH_TOKEN` — Max OAuth token for Claude Code subprocess authentication (suppresses `ANTHROPIC_API_KEY` in subprocess env)
 
 ## Contributing
 

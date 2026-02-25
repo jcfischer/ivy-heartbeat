@@ -4,7 +4,17 @@ All notable changes to ivy-heartbeat are documented here.
 
 ## [Unreleased]
 
+### Added
+- **Implement→complete phase pipeline** — `implement` and `complete` are now separate chained phases; PR creation and review dispatch happen in the `complete` phase after specflow validation
+- **`hasCommitsAhead()` check** — skips push/PR when branch has no new commits vs base
+- **`--head` flag for `gh pr create`** — fixes branch detection in git worktrees
+- **`.env` loading for compiled binaries** — manual `.env` parsing at startup since Bun only auto-loads in dev mode
+
 ### Fixed
+- Suppress `ANTHROPIC_API_KEY` with `undefined` (not empty string) in subprocess env to force OAuth authentication
+- OAuth token propagation to all subprocess launches (review agents, specflow phases)
+- Complete phase validation failures no longer block PR creation — code gets reviewed regardless
+- Branch name detection uses `getCurrentBranch()` instead of hardcoded `specflow-{featureId}` pattern
 - Review result parser uses last match to prevent prompt template text from overriding actual agent output
 - Review prompt template uses non-parseable placeholders to prevent false regex matches
 - Quality gate parses JSON output before checking exit code (specflow eval exits 1 for below-threshold scores)
@@ -12,6 +22,7 @@ All notable changes to ivy-heartbeat are documented here.
 
 ### Changed
 - SpecFlow eval commands use `spawnSync` with array args instead of `execSync` to avoid shell metacharacter interpretation
+- `PHASE_TRANSITIONS` updated: `implement` now chains to `complete` (was terminal)
 
 ## [0.1.0] - 2026-02-24
 
