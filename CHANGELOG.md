@@ -11,7 +11,7 @@ All notable changes to ivy-heartbeat are documented here.
 - **`.env` loading for compiled binaries** — manual `.env` parsing at startup since Bun only auto-loads in dev mode
 
 ### Fixed
-- Suppress `ANTHROPIC_API_KEY` with `undefined` (not empty string) in subprocess env to force OAuth authentication
+- Suppress `ANTHROPIC_API_KEY` with empty string `''` in subprocess env to force OAuth authentication — prevents Bun's `--compile-autoload-dotenv` from loading depleted keys from target project `.env` files
 - OAuth token propagation to all subprocess launches (review agents, specflow phases)
 - Complete phase validation failures no longer block PR creation — code gets reviewed regardless
 - Branch name detection uses `getCurrentBranch()` instead of hardcoded `specflow-{featureId}` pattern
