@@ -21,6 +21,7 @@ import {
 import { parseSpecFlowMeta } from '../scheduler/specflow-types.ts';
 import { runSpecFlowPhase } from '../scheduler/specflow-runner.ts';
 import { parseMergeFixMeta, createMergeFixWorkItem, runMergeFix } from '../scheduler/merge-fix.ts';
+import { parsePRMergeMeta, runPRMerge } from '../scheduler/pr-merge.ts';
 import { parseReworkMeta, runRework } from '../scheduler/rework.ts';
 import { dispatchReviewAgent } from '../scheduler/review-agent.ts';
 import { getTanaAccessor } from '../evaluators/tana-accessor.ts';
@@ -529,6 +530,33 @@ export function registerDispatchWorkerCommand(
             actorId: sessionId,
             targetId: itemId,
             summary: `Code review dispatch failed for PR #${reviewMeta.pr_number}: ${msg}`,
+            metadata: { error: msg },
+          });
+        } finally {
+          try { bb.deregisterAgent(sessionId); } catch { /* best effort */ }
+        }
+        return;
+      }
+
+      // Determine if this is a post-review PR merge work item
+      const mergeMeta = parsePRMergeMeta(item.metadata);
+      if (mergeMeta && project) {
+        try {
+          await runPRMerge(bb, item, mergeMeta, project, sessionId);
+          bb.completeWorkItem(itemId, sessionId);
+          bb.appendEvent({
+            actorId: sessionId,
+            targetId: itemId,
+            summary: `Merged PR #${mergeMeta.pr_number} for "${item.title}"`,
+            metadata: { prNumber: mergeMeta.pr_number },
+          });
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          try { bb.releaseWorkItem(itemId, sessionId); } catch { /* best effort */ }
+          bb.appendEvent({
+            actorId: sessionId,
+            targetId: itemId,
+            summary: `PR merge failed for #${mergeMeta.pr_number}: ${msg}`,
             metadata: { error: msg },
           });
         } finally {
