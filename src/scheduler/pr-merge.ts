@@ -126,12 +126,18 @@ export async function runPRMerge(
   if (merged) {
     // Pull merged changes into local main
     try {
-      await pullMain(project.local_path, meta.main_branch);
+      const pullResult = await pullMain(project.local_path, meta.main_branch);
       bb.appendEvent({
         actorId: sessionId,
         targetId: item.item_id,
-        summary: `Pulled merged changes from PR #${meta.pr_number} into ${meta.main_branch}`,
-        metadata: { mainBranch: meta.main_branch },
+        summary: pullResult.cleaned
+          ? `Cleaned ${pullResult.untrackedCount} untracked spec artifacts before pull from PR #${meta.pr_number}`
+          : `Pulled merged changes from PR #${meta.pr_number} into ${meta.main_branch}`,
+        metadata: {
+          mainBranch: meta.main_branch,
+          conflictCleaned: pullResult.cleaned,
+          untrackedCount: pullResult.untrackedCount,
+        },
       });
     } catch (pullErr: unknown) {
       const pullMsg = pullErr instanceof Error ? pullErr.message : String(pullErr);
@@ -155,14 +161,24 @@ export async function runPRMerge(
   // Check if the PR was actually merged despite the gh merge command failing
   const prState = await getPRState(project.local_path, meta.pr_number);
   if (prState === 'MERGED') {
+    let pullResult = { cleaned: false, untrackedCount: 0 };
     try {
-      await pullMain(project.local_path, meta.main_branch);
+      const result = await pullMain(project.local_path, meta.main_branch);
+      // Backward compat: old mocks may return undefined
+      if (result) pullResult = result;
     } catch { /* non-fatal */ }
     bb.appendEvent({
       actorId: sessionId,
       targetId: item.item_id,
-      summary: `PR #${meta.pr_number} already merged — skipping merge-fix`,
-      metadata: { prNumber: meta.pr_number, prState: 'MERGED' },
+      summary: pullResult.cleaned
+        ? `Cleaned ${pullResult.untrackedCount} untracked spec artifacts. PR #${meta.pr_number} already merged — skipping merge-fix`
+        : `PR #${meta.pr_number} already merged — skipping merge-fix`,
+      metadata: {
+        prNumber: meta.pr_number,
+        prState: 'MERGED',
+        conflictCleaned: pullResult.cleaned,
+        untrackedCount: pullResult.untrackedCount,
+      },
     });
     return;
   }

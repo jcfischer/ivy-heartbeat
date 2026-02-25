@@ -171,6 +171,42 @@ export async function isCleanBranch(projectPath: string): Promise<boolean> {
 }
 
 /**
+ * Detect untracked files that would conflict with an incoming git pull.
+ * Returns the list of untracked .specify/ paths, or empty array if none.
+ */
+export async function detectUntrackedSpecArtifacts(
+  projectPath: string
+): Promise<string[]> {
+  const status = await git(['status', '--porcelain'], projectPath);
+  if (!status) return [];
+
+  // Parse ?? entries (untracked files)
+  const untracked = status
+    .split('\n')
+    .filter(line => line.startsWith('??'))
+    .map(line => line.slice(3).trim());
+
+  // Filter for .specify/ artifacts only
+  return untracked.filter(path => path.startsWith('.specify/'));
+}
+
+/**
+ * Clean up untracked .specify/ artifacts before pulling.
+ * Uses git clean to remove files that will be in the merged PR.
+ * Non-fatal: logs but doesn't throw on cleanup errors.
+ */
+export async function cleanupSpecArtifacts(projectPath: string): Promise<boolean> {
+  try {
+    // -f = force, -d = directories, -x = ignored files too
+    await git(['clean', '-fdx', '.specify/'], projectPath);
+    return true;
+  } catch {
+    // Cleanup failed — pull may still work if conflicts don't actually exist
+    return false;
+  }
+}
+
+/**
  * Stash uncommitted changes if the working tree is dirty.
  * Returns true if a stash was created, false if the tree was already clean.
  */
@@ -550,11 +586,28 @@ export async function getPRState(
  * Pull latest changes into the main repo from origin.
  * Used after merging a PR so the local main branch stays in sync.
  */
+/**
+ * Pull latest changes from remote branch into local repository.
+ * Detects and cleans up untracked .specify/ artifacts before pull to prevent conflicts.
+ * @returns Object with cleanup metadata: cleaned (boolean), untrackedCount (number)
+ */
 export async function pullMain(
   projectPath: string,
   branch: string
-): Promise<void> {
+): Promise<{ cleaned: boolean; untrackedCount: number }> {
+  // Fast-path: detect untracked .specify/ artifacts before pull
+  const untrackedArtifacts = await detectUntrackedSpecArtifacts(projectPath);
+
+  if (untrackedArtifacts.length > 0) {
+    // Conflicts detected — clean up before pull
+    await cleanupSpecArtifacts(projectPath);
+    await git(['pull', 'origin', branch], projectPath);
+    return { cleaned: true, untrackedCount: untrackedArtifacts.length };
+  }
+
+  // No conflicts — pull directly
   await git(['pull', 'origin', branch], projectPath);
+  return { cleaned: false, untrackedCount: 0 };
 }
 
 // ─── Post-agent issue comment support ─────────────────────────────────────
