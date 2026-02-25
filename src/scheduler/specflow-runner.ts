@@ -22,6 +22,12 @@ import {
   PHASE_PREREQUISITES,
 } from './specflow-types.ts';
 import {
+  extractProblemStatement,
+  extractKeyDecisions,
+  getFilesChangedSummary,
+  formatFilesChanged,
+} from '../lib/pr-body-extractor.ts';
+import {
   createWorktree,
   ensureWorktree,
   removeWorktree,
@@ -1355,14 +1361,64 @@ async function handleCompletePhase(
   // Push and create PR
   await worktreeOps.pushBranch(worktreePath, branch);
 
-  const prBody = [
-    `## SpecFlow Feature: ${featureId}`,
+  // Build enhanced PR body with feature summary
+  const specDir = join(worktreePath, '.specify', 'specs');
+  const featureDir = findFeatureDir(specDir, featureId);
+  const specPath = featureDir ? join(featureDir, 'spec.md') : join(specDir, featureId, 'spec.md');
+  const planPath = featureDir ? join(featureDir, 'plan.md') : join(specDir, featureId, 'plan.md');
+
+  let summary = "See spec.md for full feature details";
+  let approach: string[] = ["See plan.md for implementation details"];
+
+  // Try to extract content from spec and plan files
+  try {
+    if (existsSync(specPath)) {
+      const specContent = await Bun.file(specPath).text();
+      summary = extractProblemStatement(specContent);
+    }
+  } catch (error) {
+    // Use fallback if spec read fails
+  }
+
+  try {
+    if (existsSync(planPath)) {
+      const planContent = await Bun.file(planPath).text();
+      approach = extractKeyDecisions(planContent);
+    }
+  } catch (error) {
+    // Use fallback if plan read fails
+  }
+
+  // Get files changed summary
+  const filesChanged = await getFilesChangedSummary(mainBranch, branch);
+  const filesChangedTable = formatFilesChanged(filesChanged);
+
+  // Assemble PR body
+  let prBody = [
+    `# Feature: ${featureId}`,
     '',
-    `Automated implementation via SpecFlow pipeline.`,
+    '## Summary',
     '',
-    `- Spec: see \`spec.md\` on this branch`,
-    `- Plan: see \`plan.md\` on this branch`,
+    summary,
+    '',
+    '## Implementation Approach',
+    '',
+    ...approach.map(point => `- ${point}`),
+    '',
+    '## Files Changed',
+    '',
+    filesChangedTable,
+    '',
+    '## Full Documentation',
+    '',
+    `- [Specification](${featureDir ? featureDir.split('/').pop() + '/spec.md' : featureId + '/spec.md'})`,
+    `- [Technical Plan](${featureDir ? featureDir.split('/').pop() + '/plan.md' : featureId + '/plan.md'})`,
   ].join('\n');
+
+  // Truncate to 4000 characters if needed
+  if (prBody.length > 4000) {
+    prBody = prBody.substring(0, 3997) + '...';
+  }
 
   const pr = await worktreeOps.createPR(
     worktreePath,
