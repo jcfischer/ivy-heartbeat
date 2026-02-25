@@ -5,6 +5,14 @@ All notable changes to ivy-heartbeat are documented here.
 ## [Unreleased]
 
 ### Added
+- **F-022 PR merge pullMain untracked file conflict**: **Current behavior:**
+1. PR is merged via `gh pr merge --squash` (line 124, pr-merge.ts)
+2. `pullMain()` is called to sync local main with merged changes (line 129 or 159)
+3. If untracked files exi...
+- **F-022 PR merge pullMain untracked file conflict**: **Current behavior:**
+1. PR is merged via `gh pr merge --squash` (line 124, pr-merge.ts)
+2. `pullMain()` is called to sync local main with merged changes (line 129 or 159)
+3. If untracked files exi...
 - **F-021 REFLECT phase - post-merge lesson extraction**: The SpecFlow dispatch pipeline currently ends at PR merge. Each specify→implement→review→merge cycle generates valuable insights — what the spec missed, what review caught, what rework fixed — but ...
 - **F-021 REFLECT phase - post-merge lesson extraction**: The SpecFlow dispatch pipeline currently ends at PR merge. Each specify→implement→review→merge cycle generates valuable insights — what the spec missed, what review caught, what rework fixed — but ...
 - **Implement→complete phase pipeline** — `implement` and `complete` are now separate chained phases; PR creation and review dispatch happen in the `complete` phase after specflow validation
