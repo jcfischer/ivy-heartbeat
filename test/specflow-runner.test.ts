@@ -136,6 +136,7 @@ beforeEach(() => {
     getCurrentBranch: async () => 'main',
     isCleanBranch: async () => true,
     getDiffSummary: async () => '',
+    getChangedFiles: async () => ['src/index.ts'],
   });
 });
 

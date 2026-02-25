@@ -32,6 +32,7 @@ import {
   hasCommitsAhead,
   isCleanBranch,
   getDiffSummary,
+  getChangedFiles,
 } from './worktree.ts';
 
 const MAX_RETRIES = 1;
@@ -102,6 +103,7 @@ export interface WorktreeOps {
   hasCommitsAhead: typeof hasCommitsAhead;
   isCleanBranch: typeof isCleanBranch;
   getDiffSummary: typeof getDiffSummary;
+  getChangedFiles: typeof getChangedFiles;
 }
 
 const defaultWorktreeOps: WorktreeOps = {
@@ -115,6 +117,7 @@ const defaultWorktreeOps: WorktreeOps = {
   hasCommitsAhead,
   isCleanBranch,
   getDiffSummary,
+  getChangedFiles,
 };
 
 let worktreeOps: WorktreeOps = defaultWorktreeOps;
@@ -1348,6 +1351,21 @@ async function handleCompletePhase(
       targetId: item.item_id,
       summary: `No commits ahead of ${mainBranch} for ${featureId} — skipping PR`,
       metadata: { featureId, branch },
+    });
+    return;
+  }
+
+  // Verify the diff contains actual source code, not just spec artifacts.
+  // If the implement phase produced no code, only .specify/ and CHANGELOG files
+  // will be in the diff — don't create a PR for spec-only changes.
+  const changedFiles = await worktreeOps.getChangedFiles(worktreePath, mainBranch);
+  const sourceFiles = changedFiles.filter(f => !f.startsWith('.specify/') && f !== 'CHANGELOG.md');
+  if (sourceFiles.length === 0) {
+    bb.appendEvent({
+      actorId: sessionId,
+      targetId: item.item_id,
+      summary: `Implementation produced no source code for ${featureId} — only spec artifacts. Skipping PR.`,
+      metadata: { featureId, branch, changedFiles },
     });
     return;
   }
