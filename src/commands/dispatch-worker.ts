@@ -25,6 +25,7 @@ import { parsePRMergeMeta, runPRMerge } from '../scheduler/pr-merge.ts';
 import { parseReworkMeta, runRework } from '../scheduler/rework.ts';
 import { dispatchReviewAgent } from '../scheduler/review-agent.ts';
 import { parseReflectMeta, runReflect } from '../scheduler/reflect.ts';
+import { handleReflectWorkItem } from '../scheduler/reflect-handler.ts';
 import { getTanaAccessor } from '../evaluators/tana-accessor.ts';
 
 /**
@@ -509,47 +510,10 @@ export function registerDispatchWorkerCommand(
 
       // Determine if this is a reflect work item (lesson extraction)
       try {
-        const reflectMeta = parseReflectMeta(JSON.parse(item.metadata || '{}'));
-        if (reflectMeta && project) {
-          const reflectStartTime = Date.now();
-
-          // Heartbeat before work
-          bb.sendHeartbeat({
-            sessionId,
-            progress: `Extracting lessons from PR #${reflectMeta.pr_number}`,
-            workItemId: itemId,
-          });
-
-          try {
-            await runReflect(bb.db, reflectMeta);
-            bb.completeWorkItem(itemId, sessionId);
-            const durationMs = Date.now() - reflectStartTime;
-
-            // Heartbeat after work
-            bb.sendHeartbeat({
-              sessionId,
-              progress: `Reflect completed for PR #${reflectMeta.pr_number} (${Math.round(durationMs / 1000)}s)`,
-              workItemId: itemId,
-            });
-
-            bb.appendEvent({
-              actorId: sessionId,
-              targetId: itemId,
-              summary: `Reflect phase completed for PR #${reflectMeta.pr_number}`,
-              metadata: { prNumber: reflectMeta.pr_number, durationMs },
-            });
-          } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err);
-            try { bb.releaseWorkItem(itemId, sessionId); } catch { /* best effort */ }
-            bb.appendEvent({
-              actorId: sessionId,
-              targetId: itemId,
-              summary: `Reflect phase failed for PR #${reflectMeta.pr_number}: ${msg}`,
-              metadata: { error: msg },
-            });
-          } finally {
-            try { bb.deregisterAgent(sessionId); } catch { /* best effort */ }
-          }
+        if (project && await handleReflectWorkItem(bb, item, sessionId, (progress) => {
+          bb.sendHeartbeat({ sessionId, progress, workItemId: itemId });
+        })) {
+          bb.deregisterAgent(sessionId);
           return;
         }
       } catch {
