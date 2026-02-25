@@ -5,10 +5,7 @@ All notable changes to ivy-heartbeat are documented here.
 ## [Unreleased]
 
 ### Added
-- **F-022 PR merge pullMain untracked file conflict**: **Current behavior:**
-1. PR is merged via `gh pr merge --squash` (line 124, pr-merge.ts)
-2. `pullMain()` is called to sync local main with merged changes (line 129 or 159)
-3. If untracked files exi...
+- **F-024: Enhanced PR body generation** — PRs now include feature summary from spec, implementation approach from plan, and files changed table instead of stub references
 - **F-022 PR merge pullMain untracked file conflict**: **Current behavior:**
 1. PR is merged via `gh pr merge --squash` (line 124, pr-merge.ts)
 2. `pullMain()` is called to sync local main with merged changes (line 129 or 159)
