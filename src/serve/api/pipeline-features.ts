@@ -3,6 +3,7 @@
  */
 
 import { Database } from 'bun:sqlite';
+import { resolve } from 'node:path';
 import type { Blackboard } from '../../blackboard.ts';
 import type {
   FeaturePipeline,
@@ -27,9 +28,14 @@ interface SpecFlowFeature {
  * Read features from a specflow features.db file
  * Returns empty array if DB doesn't exist or can't be read
  */
-export function readSpecFlowFeatures(dbPath: string): SpecFlowFeature[] {
+export function readSpecFlowFeatures(dbPath: string, allowedBase = process.cwd()): SpecFlowFeature[] {
+  const resolvedPath = resolve(dbPath);
+  const resolvedBase = resolve(allowedBase);
+
   // Validate DB path to prevent path traversal
-  if (!dbPath.endsWith('.db') || dbPath.includes('..')) {
+  if (!dbPath.endsWith('.db') ||
+      dbPath.includes('..') ||
+      !resolvedPath.startsWith(resolvedBase)) {
     return [];
   }
 

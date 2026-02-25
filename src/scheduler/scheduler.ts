@@ -2,6 +2,7 @@ import { mkdirSync, openSync, closeSync, appendFileSync } from 'node:fs';
 import type { Blackboard } from '../blackboard.ts';
 import type { BlackboardWorkItem } from 'ivy-blackboard/src/types';
 import { getLauncher, resolveLogDir, logPathForSession } from './launcher.ts';
+import { safeJSONParse } from '../lib/json-utils.ts';
 import {
   isCleanBranch,
   stashIfDirty,
@@ -548,7 +549,7 @@ export async function dispatch(
       }
 
       // Determine if this is a code_review work item
-      const reviewMeta = item.metadata ? (() => { try { return JSON.parse(item.metadata!); } catch { return {}; } })() : {};
+      const reviewMeta = item.metadata ? safeJSONParse<Record<string, unknown>>(item.metadata) ?? {} : {};
       if (item.source === 'code_review' && reviewMeta.pr_number && reviewMeta.repo) {
         try {
           await dispatchReviewAgent(bb, item, {

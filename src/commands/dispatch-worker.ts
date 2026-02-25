@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import type { CliContext } from '../cli.ts';
 import { getLauncher, logPathForSession } from '../scheduler/launcher.ts';
+import { safeJSONParse } from '../lib/json-utils.ts';
 import {
   stashIfDirty,
   popStash,
@@ -521,7 +522,7 @@ export function registerDispatchWorkerCommand(
       }
 
       // Determine if this is a code_review work item (dispatch review agent)
-      const reviewMeta = item.metadata ? (() => { try { return JSON.parse(item.metadata!); } catch { return {}; } })() : {};
+      const reviewMeta = item.metadata ? safeJSONParse<Record<string, unknown>>(item.metadata) ?? {} : {};
       if (item.source === 'code_review' && reviewMeta.pr_number && reviewMeta.repo) {
         try {
           const reviewResult = await dispatchReviewAgent(bb, item, {

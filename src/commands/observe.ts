@@ -6,6 +6,7 @@ import {
   formatRelativeTime,
 } from 'ivy-blackboard/src/output';
 import { generateSummary, formatSummaryText } from '../observe/summary.ts';
+import { safeJSONParse } from '../lib/json-utils.ts';
 
 export function registerObserveCommand(
   parent: Command,
@@ -55,8 +56,7 @@ export function registerObserveCommand(
           } else {
             const headers = ['TIME', 'OUTCOME', 'SKILL', 'CREDENTIAL', 'SUMMARY'];
             const rows = credEvents.map((e) => {
-              let meta: Record<string, unknown> = {};
-              try { meta = JSON.parse(typeof e.metadata === 'string' ? e.metadata : '{}'); } catch {}
+              const meta = safeJSONParse<Record<string, unknown>>(typeof e.metadata === 'string' ? e.metadata : '{}') ?? {};
               return [
                 formatRelativeTime(e.timestamp),
                 String(meta.outcome ?? '-'),
