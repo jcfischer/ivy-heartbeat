@@ -5,10 +5,10 @@ All notable changes to ivy-heartbeat are documented here.
 ## [Unreleased]
 
 ### Added
-- **F-025 Wire reflect phase into dispatch pipeline**: The REFLECT phase exists as working code but is architecturally isolated from the dispatch pipeline. When a PR merges successfully, no reflect work item is created on the blackboard. Even if one we...
-- **F-025 Wire reflect phase into dispatch pipeline**: The REFLECT phase exists as working code but is architecturally isolated from the dispatch pipeline. When a PR merges successfully, no reflect work item is created on the blackboard. Even if one we...
-- **F-021 REFLECT phase - post-merge lesson extraction**: The SpecFlow dispatch pipeline currently ends at PR merge. Each specify→implement→review→merge cycle generates valuable insights — what the spec missed, what review caught, what rework fixed — but ...
-- **F-021 REFLECT phase - post-merge lesson extraction**: The SpecFlow dispatch pipeline currently ends at PR merge. Each specify→implement→review→merge cycle generates valuable insights — what the spec missed, what review caught, what rework fixed — but ...
+- **F-025 Wire reflect phase into dispatch pipeline**: The REFLECT phase exists as working code but is architecturally isolated from the dispatch pipeline. When a PR merges successfully, no reflect work item is created on the blackboard. Even if one were created manually, the scheduler has no handler to dispatch it.
+- **F-024: Enhanced PR body generation** — PRs now include feature summary from spec, implementation approach from plan, and files changed table instead of stub references
+- **F-022 PR merge pullMain untracked file conflict**: Detect and clean untracked spec artifacts before pullMain to prevent merge failures
+- **F-021 REFLECT phase - post-merge lesson extraction**: Post-merge lesson extraction from the specify→implement→review→merge cycle
 - **Implement→complete phase pipeline** — `implement` and `complete` are now separate chained phases; PR creation and review dispatch happen in the `complete` phase after specflow validation
 - **`hasCommitsAhead()` check** — skips push/PR when branch has no new commits vs base
 - **`--head` flag for `gh pr create`** — fixes branch detection in git worktrees
@@ -16,6 +16,8 @@ All notable changes to ivy-heartbeat are documented here.
 
 ### Changed
 - **Replaced compiled binary with shell wrapper** — `~/bin/ivy-heartbeat` now calls `bun src/cli.ts` directly, eliminating binary-out-of-date bugs, Bun compiler crashes, and manual `.env` loading hacks
+- SpecFlow eval commands use `spawnSync` with array args instead of `execSync` to avoid shell metacharacter interpretation
+- `PHASE_TRANSITIONS` updated: `implement` now chains to `complete` (was terminal)
 
 ### Fixed
 - Suppress `ANTHROPIC_API_KEY` with empty string `''` in subprocess env to force OAuth authentication — prevents Bun's `--compile-autoload-dotenv` from loading depleted keys from target project `.env` files
@@ -26,10 +28,6 @@ All notable changes to ivy-heartbeat are documented here.
 - Review prompt template uses non-parseable placeholders to prevent false regex matches
 - Quality gate parses JSON output before checking exit code (specflow eval exits 1 for below-threshold scores)
 - Handle missing prompt file when specflow phase artifact already exists
-
-### Changed
-- SpecFlow eval commands use `spawnSync` with array args instead of `execSync` to avoid shell metacharacter interpretation
-- `PHASE_TRANSITIONS` updated: `implement` now chains to `complete` (was terminal)
 
 ## [0.1.0] - 2026-02-24
 
