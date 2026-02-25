@@ -5,6 +5,8 @@ All notable changes to ivy-heartbeat are documented here.
 ## [Unreleased]
 
 ### Added
+- **F-026 Pipeline visibility dashboard**: The dispatch pipeline processes features through 8+ phases (specify → plan → tasks → implement → complete → review → rework* → merge → reflect), across multiple projects (ivy-heartbeat, ragent, sup...
+- **F-026 Pipeline visibility dashboard**: The dispatch pipeline processes features through 8+ phases (specify → plan → tasks → implement → complete → review → rework* → merge → reflect), across multiple projects (ivy-heartbeat, ragent, sup...
 - **F-025 Wire reflect phase into dispatch pipeline**: The REFLECT phase exists as working code but is architecturally isolated from the dispatch pipeline. When a PR merges successfully, no reflect work item is created on the blackboard. Even if one were created manually, the scheduler has no handler to dispatch it.
 - **F-024: Enhanced PR body generation** — PRs now include feature summary from spec, implementation approach from plan, and files changed table instead of stub references
 - **F-022 PR merge pullMain untracked file conflict**: Detect and clean untracked spec artifacts before pullMain to prevent merge failures
