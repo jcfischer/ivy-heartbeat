@@ -5,10 +5,7 @@ All notable changes to ivy-heartbeat are documented here.
 ## [Unreleased]
 
 ### Added
-- **F-024 PR body includes feature summary from spec**: **Current State:**
-The `complete` phase in SpecFlow generates PR bodies that look like this:
-- **F-024 PR body includes feature summary from spec**: **Current State:**
-The `complete` phase in SpecFlow generates PR bodies that look like this:
+- **F-024: Enhanced PR body generation** — PRs now include feature summary from spec, implementation approach from plan, and files changed table instead of stub references
 - **F-021 REFLECT phase - post-merge lesson extraction**: The SpecFlow dispatch pipeline currently ends at PR merge. Each specify→implement→review→merge cycle generates valuable insights — what the spec missed, what review caught, what rework fixed — but ...
 - **F-021 REFLECT phase - post-merge lesson extraction**: The SpecFlow dispatch pipeline currently ends at PR merge. Each specify→implement→review→merge cycle generates valuable insights — what the spec missed, what review caught, what rework fixed — but ...
 - **Implement→complete phase pipeline** — `implement` and `complete` are now separate chained phases; PR creation and review dispatch happen in the `complete` phase after specflow validation

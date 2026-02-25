@@ -3,20 +3,24 @@
  * Extracts feature summaries from spec.md and plan.md files.
  */
 
-export interface PRBodyData {
-  featureName: string;
-  featureId: string;
-  summary: string;           // Extracted from spec Problem Statement
-  approach: string[];        // Bullet points from plan decisions
-  filesChanged: FileChange[]; // From git diff --stat
-  specPath: string;          // Link to spec.md
-  planPath: string;          // Link to plan.md
-}
-
 export interface FileChange {
   path: string;
   additions: number;
   deletions: number;
+}
+
+/**
+ * Extract content between a matched heading and the next heading.
+ * @param content - The full markdown content
+ * @param match - RegExp match result containing the heading
+ * @returns Section content between this heading and the next, trimmed
+ */
+function extractSectionContent(content: string, match: RegExpMatchArray): string {
+  const startIdx = match.index! + match[0].length;
+  const remainingContent = content.substring(startIdx);
+  const nextHeadingMatch = remainingContent.match(/^##?\s+/m);
+  const endIdx = nextHeadingMatch ? nextHeadingMatch.index! : remainingContent.length;
+  return remainingContent.substring(0, endIdx).trim();
 }
 
 /**
@@ -36,16 +40,7 @@ export function extractProblemStatement(specContent: string): string {
   for (const pattern of headingPatterns) {
     const match = specContent.match(pattern);
     if (match) {
-      // Find content between this heading and the next heading
-      const startIdx = match.index! + match[0].length;
-      const remainingContent = specContent.substring(startIdx);
-
-      // Find next heading (# or ##) or end of file
-      const nextHeadingMatch = remainingContent.match(/^##?\s+/m);
-      const endIdx = nextHeadingMatch ? nextHeadingMatch.index! : remainingContent.length;
-
-      // Extract the section content
-      const sectionContent = remainingContent.substring(0, endIdx).trim();
+      const sectionContent = extractSectionContent(specContent, match);
 
       if (sectionContent.length > 0) {
         // Extract first 2-3 sentences or up to 300 characters
@@ -85,14 +80,7 @@ export function extractKeyDecisions(planContent: string): string[] {
   for (const pattern of decisionSections) {
     const match = planContent.match(pattern);
     if (match) {
-      // Find content between this heading and next heading
-      const startIdx = match.index! + match[0].length;
-      const remainingContent = planContent.substring(startIdx);
-
-      // Find next heading or end
-      const nextHeadingMatch = remainingContent.match(/^##?\s+/m);
-      const endIdx = nextHeadingMatch ? nextHeadingMatch.index! : remainingContent.length;
-      const sectionContent = remainingContent.substring(0, endIdx);
+      const sectionContent = extractSectionContent(planContent, match);
 
       // Extract bullet points (lines starting with - or *)
       const bulletPattern = /^[\s]*[-*]\s+(.+)$/gm;
