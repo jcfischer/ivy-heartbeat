@@ -12,6 +12,7 @@ import type {
   PipelineTiming,
 } from './pipeline-types.ts';
 import { ALL_PIPELINE_PHASES } from './pipeline-types.ts';
+import { safeJSONParse } from '../../lib/json-utils.ts';
 
 interface SpecFlowFeature {
   id: string;
@@ -27,6 +28,11 @@ interface SpecFlowFeature {
  * Returns empty array if DB doesn't exist or can't be read
  */
 export function readSpecFlowFeatures(dbPath: string): SpecFlowFeature[] {
+  // Validate DB path to prevent path traversal
+  if (!dbPath.endsWith('.db') || dbPath.includes('..')) {
+    return [];
+  }
+
   try {
     const db = new Database(dbPath, { readonly: true });
     const rows = db.query('SELECT id, name, phase, status, spec_path, created_at FROM features').all() as SpecFlowFeature[];
@@ -41,20 +47,21 @@ export function readSpecFlowFeatures(dbPath: string): SpecFlowFeature[] {
 /**
  * Extract PR metadata from work item metadata
  */
-function extractPRMetadata(metadata: string): PRMetadata | undefined {
-  try {
-    const meta = JSON.parse(metadata);
-    if (meta.pr_number && meta.repo) {
-      return {
-        number: meta.pr_number,
-        url: `https://github.com/${meta.repo}/pull/${meta.pr_number}`,
-        state: meta.pr_state || 'open',
-      };
-    }
-  } catch {
+function extractPRMetadata(metadata: string, repoUrlBase = 'https://github.com'): PRMetadata | undefined {
+  const meta = safeJSONParse<{ pr_number?: number; repo?: string; pr_state?: string }>(metadata);
+  if (!meta || !meta.pr_number || !meta.repo) {
     return undefined;
   }
-  return undefined;
+
+  // Ensure state is one of the valid values
+  const state: 'open' | 'merged' | 'closed' =
+    (meta.pr_state === 'merged' || meta.pr_state === 'closed') ? meta.pr_state : 'open';
+
+  return {
+    number: meta.pr_number,
+    url: `${repoUrlBase}/${meta.repo}/pull/${meta.pr_number}`,
+    state,
+  };
 }
 
 /**
@@ -86,29 +93,33 @@ export function getFeaturePipelines(
 
   for (const item of items) {
     if (!item.metadata) continue;
-    try {
-      const meta = JSON.parse(item.metadata);
-      const featureId = meta.specflow_feature_id;
-      const project = meta.specflow_project_id || meta.project;
 
-      if (!featureId || !meta.specflow_phase) continue;
+    const meta = safeJSONParse<{
+      specflow_feature_id?: string;
+      specflow_project_id?: string;
+      project?: string;
+      specflow_phase?: string;
+    }>(item.metadata);
 
-      if (!featureMap.has(featureId)) {
-        featureMap.set(featureId, { items: [], project });
-      }
+    if (!meta) continue; // Skip malformed JSON
 
-      featureMap.get(featureId)!.items.push({
-        phase: meta.specflow_phase,
-        status: item.status,
-        metadata: item.metadata,
-        created_at: item.created_at,
-        updated_at: item.updated_at,
-        title: item.title,
-      });
-    } catch {
-      // Skip malformed JSON
-      continue;
+    const featureId = meta.specflow_feature_id;
+    const project = meta.specflow_project_id || meta.project;
+
+    if (!featureId || !meta.specflow_phase) continue;
+
+    if (!featureMap.has(featureId)) {
+      featureMap.set(featureId, { items: [], project });
     }
+
+    featureMap.get(featureId)!.items.push({
+      phase: meta.specflow_phase,
+      status: item.status,
+      metadata: item.metadata,
+      created_at: item.created_at,
+      updated_at: item.updated_at,
+      title: item.title,
+    });
   }
 
   // Build pipeline objects
@@ -147,11 +158,9 @@ export function getFeaturePipelines(
       } else if (workItem.status === 'claimed') {
         currentPhase = workItem.phase;
         // Extract active agent from metadata
-        try {
-          const meta = JSON.parse(workItem.metadata);
-          activeAgent = meta.session_id;
-        } catch {
-          // ignore
+        const agentMeta = safeJSONParse<{ session_id?: string }>(workItem.metadata);
+        if (agentMeta) {
+          activeAgent = agentMeta.session_id;
         }
       } else if (workItem.status === 'available') {
         currentPhase = workItem.phase;
@@ -164,16 +173,14 @@ export function getFeaturePipelines(
       }
 
       // Track review outcomes
-      try {
-        const meta = JSON.parse(workItem.metadata);
-        if (workItem.phase === 'review' && meta.review_result) {
-          reviewStatus = meta.review_result === 'changes_requested' ? 'changes_requested' : 'approved';
+      const reviewMeta = safeJSONParse<{ review_result?: string }>(workItem.metadata);
+      if (reviewMeta) {
+        if (workItem.phase === 'review' && reviewMeta.review_result) {
+          reviewStatus = reviewMeta.review_result === 'changes_requested' ? 'changes_requested' : 'approved';
         }
         if (workItem.phase === 'rework') {
           reworkCycles++;
         }
-      } catch {
-        // ignore
       }
 
       // Track timing
