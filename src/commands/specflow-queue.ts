@@ -4,6 +4,13 @@ import { existsSync, readdirSync } from 'node:fs';
 import type { CliContext } from '../cli.ts';
 import type { SpecFlowPhase } from '../scheduler/specflow-types.ts';
 
+/** Artifact that proves a phase is complete */
+const PHASE_ARTIFACT: Partial<Record<SpecFlowPhase, string>> = {
+  specify: 'spec.md',
+  plan: 'plan.md',
+  tasks: 'tasks.md',
+};
+
 /**
  * Detect the correct starting phase based on existing artifacts on disk.
  * Returns the first phase whose artifact does NOT yet exist.
@@ -187,6 +194,70 @@ export function registerSpecFlowQueueCommand(
       if (detected.found.length > 0) {
         console.log(`Existing artifacts found: ${detected.found.join(', ')}`);
         console.log(`Starting at phase: ${startPhase} (skipping completed phases)`);
+      }
+
+      // ─── Advance specflow DB phase to match detected artifacts ─────
+      // When existing artifacts are found, the specflow DB may still be
+      // at an earlier phase (e.g., "none"). The runner's prerequisite
+      // check will block unless we advance the DB to match.
+      if (detected.found.length > 0 && project.local_path) {
+        try {
+          // Get current DB phase for this feature
+          const statusProc = Bun.spawn(['specflow', 'status', '--json'], {
+            cwd: project.local_path,
+            stdout: 'pipe',
+            stderr: 'pipe',
+          });
+          const statusOutput = await new Response(statusProc.stdout).text();
+          await statusProc.exited;
+
+          if (statusProc.exitCode === 0) {
+            const statusData = JSON.parse(statusOutput);
+            const features = statusData.features ?? statusData;
+            const featureList = Array.isArray(features) ? features : [];
+            const feature = featureList.find(
+              (f: { id?: string; feature_id?: string }) =>
+                f.id === opts.feature || f.feature_id === opts.feature
+            );
+
+            const dbPhase = feature?.phase ?? 'none';
+            const phaseOrder: Record<string, number> = {
+              none: 0, specify: 1, plan: 2, tasks: 3, implement: 4, complete: 5,
+            };
+            const dbPhaseIdx = phaseOrder[dbPhase] ?? 0;
+
+            // Advance DB through each phase whose artifact exists on disk.
+            // E.g., if spec.md + plan.md exist and DB is at "none", advance
+            // through specify → plan so the runner's prerequisite check passes.
+            for (const [phase, artifact] of Object.entries(PHASE_ARTIFACT)) {
+              const idx = phaseOrder[phase] ?? 0;
+              if (idx > dbPhaseIdx && detected.found.includes(artifact!)) {
+                console.log(`Advancing specflow DB: ${opts.feature} → phase ${phase}`);
+                const advProc = Bun.spawn(['specflow', 'phase', opts.feature, phase], {
+                  cwd: project.local_path,
+                  stdout: 'pipe',
+                  stderr: 'pipe',
+                });
+                await advProc.exited;
+              }
+            }
+
+            // ─── Fix spec_path if it points to a file instead of directory ──
+            if (feature?.specPath && feature.specPath.endsWith('.md')) {
+              const dirPath = feature.specPath.replace(/\/[^/]+\.md$/, '');
+              console.log(`Fixing spec_path: ${feature.specPath} → ${dirPath}`);
+              const editProc = Bun.spawn(['specflow', 'edit', opts.feature, '--spec-path', dirPath], {
+                cwd: project.local_path,
+                stdout: 'pipe',
+                stderr: 'pipe',
+              });
+              await editProc.exited;
+            }
+          }
+        } catch {
+          // Non-fatal — the runner's prerequisite check will handle it
+          console.log('Warning: could not advance specflow DB phases (non-fatal)');
+        }
       }
 
       // Create work item
