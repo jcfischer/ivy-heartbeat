@@ -299,7 +299,7 @@ export async function runRework(
       throw new Error(`Rework agent failed (exit ${result.exitCode})`);
     }
 
-    // Commit and push the rework changes
+    // Commit and push any remaining rework changes (agent may have already committed/pushed)
     const sha = await commitAll(
       wtPath,
       `Address review feedback for PR #${meta.pr_number} (cycle ${meta.rework_cycle})`
@@ -313,39 +313,39 @@ export async function runRework(
         summary: `Rework: pushed fixes for PR #${meta.pr_number} (cycle ${meta.rework_cycle})`,
         metadata: { commitSha: sha, prNumber: meta.pr_number },
       });
+    }
 
-      // Create a new review work item to trigger re-review
-      const reviewItemId = `review-${meta.project_id}-pr-${meta.pr_number}-cycle-${meta.rework_cycle}`;
-      try {
-        bb.createWorkItem({
-          id: reviewItemId,
-          title: `Code review: PR #${meta.pr_number} (post-rework cycle ${meta.rework_cycle})`,
-          description: `AI code review for PR #${meta.pr_number} after rework cycle ${meta.rework_cycle}\nBranch: ${meta.branch}\nRepo: ${meta.repo}`,
-          project: meta.project_id,
-          source: 'code_review',
-          sourceRef: meta.pr_url,
-          priority: 'P1',
-          metadata: JSON.stringify({
-            pr_number: meta.pr_number,
-            pr_url: meta.pr_url,
-            repo: meta.repo,
-            branch: meta.branch,
-            main_branch: meta.main_branch,
-            implementation_work_item_id: meta.implementation_work_item_id,
-            rework_cycle: meta.rework_cycle,
-            worktree_path: wtPath,
-            review_status: null,
-          }),
-        });
-        bb.appendEvent({
-          actorId: sessionId,
-          targetId: item.item_id,
-          summary: `Created re-review work item ${reviewItemId} for PR #${meta.pr_number}`,
-          metadata: { reviewItemId, reworkCycle: meta.rework_cycle },
-        });
-      } catch {
-        // Review item may already exist — non-fatal
-      }
+    // Always create re-review work item — agent may have committed/pushed directly
+    const reviewItemId = `review-${meta.project_id}-pr-${meta.pr_number}-cycle-${meta.rework_cycle}`;
+    try {
+      bb.createWorkItem({
+        id: reviewItemId,
+        title: `Code review: PR #${meta.pr_number} (post-rework cycle ${meta.rework_cycle})`,
+        description: `AI code review for PR #${meta.pr_number} after rework cycle ${meta.rework_cycle}\nBranch: ${meta.branch}\nRepo: ${meta.repo}`,
+        project: meta.project_id,
+        source: 'code_review',
+        sourceRef: meta.pr_url,
+        priority: 'P1',
+        metadata: JSON.stringify({
+          pr_number: meta.pr_number,
+          pr_url: meta.pr_url,
+          repo: meta.repo,
+          branch: meta.branch,
+          main_branch: meta.main_branch,
+          implementation_work_item_id: meta.implementation_work_item_id,
+          rework_cycle: meta.rework_cycle,
+          worktree_path: wtPath,
+          review_status: null,
+        }),
+      });
+      bb.appendEvent({
+        actorId: sessionId,
+        targetId: item.item_id,
+        summary: `Created re-review work item ${reviewItemId} for PR #${meta.pr_number}`,
+        metadata: { reviewItemId, reworkCycle: meta.rework_cycle },
+      });
+    } catch {
+      // Review item may already exist — non-fatal
     }
 
     bb.appendEvent({
