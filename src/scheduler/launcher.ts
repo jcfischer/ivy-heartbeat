@@ -224,11 +224,13 @@ async function defaultLauncher(opts: LaunchOptions): Promise<LaunchResult> {
   const env: Record<string, string | undefined> = {
     ...process.env,
     CLAUDECODE: undefined,
-    // When OAuth token is available, remove ANTHROPIC_API_KEY from the subprocess
-    // environment entirely. Setting it to undefined deletes it from the env dict,
-    // preventing Claude Code from finding a depleted API key (e.g. from the target
-    // project's .env) and forcing it to fall back to OAuth authentication.
-    ...(process.env.CLAUDE_CODE_OAUTH_TOKEN ? { ANTHROPIC_API_KEY: undefined } : {}),
+    // When OAuth token is available, suppress ANTHROPIC_API_KEY to force OAuth auth.
+    // The `claude` CLI is Bun-compiled with --compile-autoload-dotenv, so it loads
+    // .env from its CWD. Target projects may have a depleted ANTHROPIC_API_KEY in
+    // their .env. We set it to empty string "" which:
+    // 1. Prevents Bun's .env loading from overriding (key exists in env)
+    // 2. Is falsy, so Claude Code skips it and falls through to CLAUDE_CODE_OAUTH_TOKEN
+    ...(process.env.CLAUDE_CODE_OAUTH_TOKEN ? { ANTHROPIC_API_KEY: '' } : {}),
   };
 
   const proc = Bun.spawn(args, {
