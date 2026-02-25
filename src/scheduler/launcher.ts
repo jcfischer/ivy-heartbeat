@@ -221,7 +221,15 @@ async function defaultLauncher(opts: LaunchOptions): Promise<LaunchResult> {
   }
   args.push(opts.prompt);
 
-  const env: Record<string, string | undefined> = { ...process.env, CLAUDECODE: undefined };
+  const env: Record<string, string | undefined> = {
+    ...process.env,
+    CLAUDECODE: undefined,
+    // When OAuth token is available, set ANTHROPIC_API_KEY to empty string so that
+    // Bun's .env auto-loading in the subprocess won't override it from the target
+    // project's .env (Bun skips env vars already present in process.env).
+    // This forces Claude Code to use OAuth auth instead of a depleted API key.
+    ...(process.env.CLAUDE_CODE_OAUTH_TOKEN ? { ANTHROPIC_API_KEY: '' } : {}),
+  };
 
   const proc = Bun.spawn(args, {
     cwd: opts.workDir,
