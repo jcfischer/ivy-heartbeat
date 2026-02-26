@@ -8,6 +8,7 @@ import { evaluateSpecFlowCleanup } from '../evaluators/specflow-cleanup.ts';
 import { evaluateTanaTodos } from '../evaluators/tana-todos.ts';
 import { evaluateGithubIssueWatcher } from '../evaluators/github-issue-watcher.ts';
 import { evaluateGithubPrReview } from '../evaluators/github-pr-review.ts';
+import { evaluateSpecFlowOrchestrate } from '../evaluators/specflow-orchestrate.ts';
 
 export type Evaluator = (item: ChecklistItem) => Promise<CheckResult>;
 
@@ -30,6 +31,8 @@ const evaluators: Record<CheckType, Evaluator> = {
   agent_dispatch: evaluateAgentDispatch,
 
   specflow_cleanup: evaluateSpecFlowCleanup,
+
+  specflow_orchestrate: evaluateSpecFlowOrchestrate,
 
   custom: async (item) => ({
     item,

@@ -10,6 +10,7 @@ import { setDispatchBlackboard, resetDispatchBlackboard } from '../evaluators/ag
 import { setWatcherBlackboardAccessor, resetWatcherBlackboardAccessor } from '../evaluators/github-issue-watcher.ts';
 import { setPrReviewBlackboardAccessor, resetPrReviewBlackboardAccessor } from '../evaluators/github-pr-review.ts';
 import { setCleanupBlackboard, resetCleanupBlackboard } from '../evaluators/specflow-cleanup.ts';
+import { setOrchestratorBlackboard, resetOrchestratorBlackboard } from '../evaluators/specflow-orchestrate.ts';
 import { setReviewCycleAccessor, resetReviewCycleAccessor } from '../scheduler/worktree.ts';
 import type {
   CheckOptions,
@@ -95,6 +96,7 @@ export async function runChecks(
   setWatcherBlackboardAccessor(bb);
   setPrReviewBlackboardAccessor(bb);
   setCleanupBlackboard(bb);
+  setOrchestratorBlackboard(bb);
   setReviewCycleAccessor(bb);
 
   const results: CheckResult[] = [];
@@ -169,6 +171,7 @@ export async function runChecks(
   resetWatcherBlackboardAccessor();
   resetPrReviewBlackboardAccessor();
   resetCleanupBlackboard();
+  resetOrchestratorBlackboard();
   resetReviewCycleAccessor();
 
   return {

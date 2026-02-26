@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const CheckTypeSchema = z.enum(['calendar', 'email', 'github_issues', 'github_issue_watcher', 'github_pr_review', 'tana_todos', 'agent_dispatch', 'specflow_cleanup', 'custom']);
+export const CheckTypeSchema = z.enum(['calendar', 'email', 'github_issues', 'github_issue_watcher', 'github_pr_review', 'tana_todos', 'agent_dispatch', 'specflow_cleanup', 'specflow_orchestrate', 'custom']);
 export const SeveritySchema = z.enum(['low', 'medium', 'high', 'critical']);
 export const ChannelSchema = z.enum(['voice', 'terminal', 'email']);
 
