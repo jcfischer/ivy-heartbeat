@@ -11,6 +11,7 @@ import { setWatcherBlackboardAccessor, resetWatcherBlackboardAccessor } from '..
 import { setPrReviewBlackboardAccessor, resetPrReviewBlackboardAccessor } from '../evaluators/github-pr-review.ts';
 import { setCleanupBlackboard, resetCleanupBlackboard } from '../evaluators/specflow-cleanup.ts';
 import { setOrchestratorBlackboard, resetOrchestratorBlackboard } from '../evaluators/specflow-orchestrate.ts';
+import { releaseOrphanedFeatures } from '../scheduler/specflow/orchestrator.ts';
 import { setReviewCycleAccessor, resetReviewCycleAccessor } from '../scheduler/worktree.ts';
 import type {
   CheckOptions,
@@ -88,6 +89,11 @@ export async function runChecks(
       };
     }
   }
+
+  // Release any features orphaned by a previous check process that was killed.
+  // Each check invocation is a fresh process — any 'active' feature from a
+  // prior invocation's process has no owner, so release it immediately.
+  releaseOrphanedFeatures(bb, `check-startup-${process.pid}`);
 
   // Make blackboard available to evaluators that need it
   setBlackboardAccessor(bb);
