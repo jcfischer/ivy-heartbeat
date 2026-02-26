@@ -8,14 +8,13 @@
 import { join, dirname } from 'node:path';
 import { existsSync, readdirSync, mkdirSync, symlinkSync, lstatSync, cpSync, readFileSync, appendFileSync, unlinkSync } from 'node:fs';
 import type { Blackboard } from '../blackboard.ts';
-import type { BlackboardWorkItem, SpecFlowFeature } from 'ivy-blackboard/src/types';
+import type { BlackboardWorkItem } from 'ivy-blackboard/src/types';
 import { getLauncher, logPathForSession } from './launcher.ts';
 import {
   type SpecFlowPhase,
   type SpecFlowPhaseResult,
   type SpecFlowWorkItemMetadata,
   parseSpecFlowMeta,
-  nextPhase,
   PHASE_RUBRICS,
   PHASE_ARTIFACTS,
   PHASE_EXPECTED_ARTIFACTS,
@@ -46,63 +45,6 @@ const QUALITY_THRESHOLD = 80;
 const SPECFLOW_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 const IMPLEMENT_TIMEOUT_MIN_MS = 30 * 60 * 1000; // 30 minutes minimum
 const IMPLEMENT_TIMEOUT_PER_TASK_MS = 3 * 60 * 1000; // +3 minutes per task
-
-// ─── specflow_features dual-write helpers (Phase 2 bridge) ───────────────────
-
-/** Map work-item phase names to specflow_features active (`*ing`) phase values. */
-function toActiveDbPhase(phase: string): string {
-  const map: Record<string, string> = {
-    specify: 'specifying', plan: 'planning', tasks: 'tasking',
-    implement: 'implementing', complete: 'completing',
-  };
-  return map[phase] ?? phase;
-}
-
-/** Map work-item phase names to specflow_features completed (`*ed`) phase values. */
-function toCompletedDbPhase(phase: string): string {
-  const map: Record<string, string> = {
-    specify: 'specified', plan: 'planned', tasks: 'tasked',
-    implement: 'implemented', complete: 'completed',
-  };
-  return map[phase] ?? phase;
-}
-
-/** Score field name for a given phase, or null if no score applies. */
-function getScoreField(phase: string): string | null {
-  const map: Record<string, string> = {
-    specify: 'specify_score', plan: 'plan_score', implement: 'implement_score',
-  };
-  return map[phase] ?? null;
-}
-
-/**
- * Ensure a specflow_features row exists for this feature.
- * Creates one from work item metadata if missing (covers items created before Phase 2).
- * All errors are swallowed — dual-write must never block the pipeline.
- */
-function ensureFeatureRow(
-  bb: Blackboard,
-  featureId: string,
-  projectId: string,
-  item: BlackboardWorkItem,
-  meta: SpecFlowWorkItemMetadata,
-): void {
-  try {
-    if (bb.getFeature(featureId)) return;
-    bb.createFeature({
-      feature_id: featureId,
-      project_id: projectId,
-      title: item.title,
-      source: item.source ?? 'specflow',
-      source_ref: item.source_ref ?? undefined,
-      github_issue_number: meta.github_issue_number ?? undefined,
-      github_issue_url: meta.github_issue_url ?? undefined,
-      github_repo: meta.github_repo ?? undefined,
-    });
-  } catch {
-    // Non-fatal — dual-write must not block pipeline
-  }
-}
 
 // ─── Injectable specflow CLI runner (for testing) ─────────────────────
 
@@ -260,19 +202,6 @@ export async function runSpecFlowPhase(
     summary: `Worktree ready at ${worktreePath}`,
     metadata: { worktreePath, phase },
   });
-
-  // T-2.2: Dual-write phase start to specflow_features (non-fatal)
-  try {
-    ensureFeatureRow(bb, featureId, project.project_id, item, meta);
-    bb.updateFeature(featureId, {
-      phase: toActiveDbPhase(phase) as SpecFlowFeature['phase'],
-      status: 'active' as SpecFlowFeature['status'],
-      current_session: sessionId,
-      worktree_path: worktreePath,
-      branch_name: branch,
-      phase_started_at: new Date().toISOString(),
-    });
-  } catch { /* non-fatal — dual-write must not block pipeline */ }
 
   // ─── Reset worktree state on retry (clean slate for new attempt) ───
   if (meta.retry_count && meta.retry_count > 0 && phase === 'implement') {
@@ -657,16 +586,6 @@ export async function runSpecFlowPhase(
         summary: `SpecFlow phase "${phase}" failed (exit ${result.exitCode}) for ${featureId}`,
         metadata: { phase, exitCode: result.exitCode, stderr: result.stderr.slice(0, 500) },
       });
-      // T-2.4: Dual-write phase failure to specflow_features (non-fatal)
-      try {
-        const f = bb.getFeature(featureId);
-        bb.updateFeature(featureId, {
-          status: 'failed' as SpecFlowFeature['status'],
-          failure_count: (f?.failure_count ?? 0) + 1,
-          last_error: `Phase "${phase}" failed (exit ${result.exitCode})`,
-          last_phase_error: phase,
-        });
-      } catch { /* non-fatal */ }
       return { status: 'failed' };
     }
   }
@@ -696,16 +615,6 @@ export async function runSpecFlowPhase(
         summary: `SpecFlow phase "${phase}" exited 0 but ${expectedArtifact} missing for ${featureId} — treating as failure`,
         metadata: { phase, featureId, expectedArtifact, checkedPath: artifactFile },
       });
-      // T-2.4: Dual-write artifact-missing failure to specflow_features (non-fatal)
-      try {
-        const f = bb.getFeature(featureId);
-        bb.updateFeature(featureId, {
-          status: 'failed' as SpecFlowFeature['status'],
-          failure_count: (f?.failure_count ?? 0) + 1,
-          last_error: `Phase "${phase}" produced no ${expectedArtifact}`,
-          last_phase_error: phase,
-        });
-      } catch { /* non-fatal */ }
       return { status: 'failed' };
     }
 
@@ -858,16 +767,6 @@ export async function runSpecFlowPhase(
         summary: `Implementation agent failed (exit ${launchResult.exitCode}) for ${featureId}`,
         metadata: { exitCode: launchResult.exitCode },
       });
-      // T-2.4: Dual-write implement agent failure to specflow_features (non-fatal)
-      try {
-        const f = bb.getFeature(featureId);
-        bb.updateFeature(featureId, {
-          status: 'failed' as SpecFlowFeature['status'],
-          failure_count: (f?.failure_count ?? 0) + 1,
-          last_error: `Implementation agent failed (exit ${launchResult.exitCode})`,
-          last_phase_error: phase,
-        });
-      } catch { /* non-fatal */ }
       return { status: 'failed' };
     }
 
@@ -890,32 +789,12 @@ export async function runSpecFlowPhase(
     if (!gateResult.passed) {
       const retryCount = meta.retry_count ?? 0;
       if (retryCount < MAX_RETRIES) {
-        try {
-          await chainRetry(bb, item, meta, gateResult.feedback, worktreePath, mainBranch);
-        } catch (chainErr: unknown) {
-          // Content filter may block eval feedback in the retry description.
-          // Retry with truncated feedback so the pipeline continues.
-          const msg = chainErr instanceof Error ? chainErr.message : '';
-          if (msg.includes('Content blocked') || msg.includes('CONTENT_BLOCKED')) {
-            await chainRetry(bb, item, meta, `[feedback filtered] score: ${gateResult.score}%`, worktreePath, mainBranch);
-          } else {
-            throw chainErr;
-          }
-        }
         bb.appendEvent({
           actorId: sessionId,
           targetId: item.item_id,
           summary: `Quality gate failed (${gateResult.score}%) — retrying ${featureId} phase "${phase}" (attempt ${retryCount + 1}/${MAX_RETRIES})`,
           metadata: { phase, score: gateResult.score, retryCount: retryCount + 1 },
         });
-        // T-2.4: Dual-write retry failure_count increment to specflow_features (non-fatal)
-        try {
-          const f = bb.getFeature(featureId);
-          bb.updateFeature(featureId, {
-            failure_count: (f?.failure_count ?? 0) + 1,
-            last_phase_error: phase,
-          });
-        } catch { /* non-fatal */ }
         // Retry: caller should complete original item, retry item supersedes
         return { status: 'retry' };
       } else {
@@ -925,17 +804,6 @@ export async function runSpecFlowPhase(
           summary: `Quality gate failed (${gateResult.score}%) — max retries exceeded for ${featureId} phase "${phase}"`,
           metadata: { phase, score: gateResult.score, maxRetries: MAX_RETRIES },
         });
-        // T-2.4: Dual-write max-retries failure to specflow_features (non-fatal)
-        try {
-          const f = bb.getFeature(featureId);
-          bb.updateFeature(featureId, {
-            phase: 'failed' as SpecFlowFeature['phase'],
-            status: 'failed' as SpecFlowFeature['status'],
-            failure_count: (f?.failure_count ?? 0) + 1,
-            last_error: `Phase "${phase}" quality gate failed after ${MAX_RETRIES} retries (score: ${gateResult.score}%)`,
-            last_phase_error: phase,
-          });
-        } catch { /* non-fatal */ }
         // Pipeline exhausted — mark as failed so it's not silently "completed"
         return { status: 'failed' };
       }
@@ -950,16 +818,6 @@ export async function runSpecFlowPhase(
     });
   }
 
-  // T-2.3: Dual-write phase completion to specflow_features (non-fatal)
-  try {
-    const scoreField = getScoreField(phase);
-    bb.updateFeature(featureId, {
-      phase: toCompletedDbPhase(phase) as SpecFlowFeature['phase'],
-      status: 'succeeded' as SpecFlowFeature['status'],
-      ...(scoreField !== null && evalScore !== null ? { [scoreField]: evalScore } : {}),
-    });
-  } catch { /* non-fatal */ }
-
   // ─── Implement phase: commit changes ────────────────────────────
   if (phase === 'implement') {
     await handleImplementPhase(bb, item, meta, worktreePath, sessionId);
@@ -970,35 +828,7 @@ export async function runSpecFlowPhase(
     await handleCompletePhase(bb, item, meta, worktreePath, mainBranch, sessionId, project.local_path, project.remote_repo);
   }
 
-  // ─── Chain next phase ────────────────────────────────────────────
-  const next = nextPhase(phase);
-  if (next) {
-    try {
-      await chainNextPhase(bb, item, meta, next, worktreePath, mainBranch);
-    } catch (chainErr: unknown) {
-      // Content filter may block metadata in the new work item.
-      // Log and continue — the phase itself succeeded.
-      const msg = chainErr instanceof Error ? chainErr.message : '';
-      if (msg.includes('Content blocked') || msg.includes('CONTENT_BLOCKED')) {
-        bb.appendEvent({
-          actorId: sessionId,
-          targetId: item.item_id,
-          summary: `Content filter blocked chaining phase "${next}" for ${featureId} — manual queue needed`,
-          metadata: { phase, nextPhase: next, error: 'CONTENT_BLOCKED' },
-        });
-      } else {
-        throw chainErr;
-      }
-    }
-    bb.appendEvent({
-      actorId: sessionId,
-      targetId: item.item_id,
-      summary: `Chained next phase "${next}" for ${featureId}`,
-      metadata: { currentPhase: phase, nextPhase: next },
-    });
-  }
-
-  return { status: 'completed', nextPhase: next ?? undefined };
+  return { status: 'completed' };
 }
 
 // ─── Phase-via-launcher ─────────────────────────────────────────────────
@@ -1389,93 +1219,6 @@ async function generateMissingArtifacts(
   }
 
   return true;
-}
-
-// ─── Chain next phase ──────────────────────────────────────────────────
-
-async function chainNextPhase(
-  bb: Blackboard,
-  item: BlackboardWorkItem,
-  meta: SpecFlowWorkItemMetadata,
-  next: SpecFlowPhase,
-  worktreePath: string,
-  mainBranch: string
-): Promise<void> {
-  // DEPRECATED: When orchestrator is active, phase advancement is driven by specflow_features table.
-  // Keep function body for rollback capability (Phase 5 will delete this).
-  if (process.env.SPECFLOW_ORCHESTRATOR === 'true') {
-    console.warn('[specflow-runner] DEPRECATED: chainNextPhase() called but SPECFLOW_ORCHESTRATOR=true — skipping work-item creation');
-    return;
-  }
-
-  const newMeta: SpecFlowWorkItemMetadata = {
-    specflow_feature_id: meta.specflow_feature_id,
-    specflow_phase: next,
-    specflow_project_id: meta.specflow_project_id,
-    worktree_path: worktreePath,
-    main_branch: mainBranch,
-    retry_count: 0,
-    // Carry GitHub metadata for evaluator dedup
-    github_issue_url: meta.github_issue_url,
-    github_issue_number: meta.github_issue_number,
-    github_repo: meta.github_repo,
-  };
-
-  bb.createWorkItem({
-    id: `specflow-${meta.specflow_feature_id}-${next}`,
-    title: `SpecFlow ${next}: ${meta.specflow_feature_id}`,
-    description: `SpecFlow phase "${next}" for feature ${meta.specflow_feature_id}`,
-    project: meta.specflow_project_id,
-    source: 'specflow',
-    sourceRef: meta.github_issue_url ?? meta.specflow_feature_id,
-    priority: item.priority ?? 'P2',
-    metadata: JSON.stringify(newMeta),
-  });
-}
-
-// ─── Chain retry ────────────────────────────────────────────────────────
-
-async function chainRetry(
-  bb: Blackboard,
-  item: BlackboardWorkItem,
-  meta: SpecFlowWorkItemMetadata,
-  feedback: string,
-  worktreePath: string,
-  mainBranch: string
-): Promise<void> {
-  // DEPRECATED: When orchestrator is active, retries are driven by specflow_features failure_count.
-  // Keep function body for rollback capability (Phase 5 will delete this).
-  if (process.env.SPECFLOW_ORCHESTRATOR === 'true') {
-    console.warn('[specflow-runner] DEPRECATED: chainRetry() called but SPECFLOW_ORCHESTRATOR=true — skipping retry work-item creation');
-    return;
-  }
-
-  const retryCount = (meta.retry_count ?? 0) + 1;
-
-  const newMeta: SpecFlowWorkItemMetadata = {
-    specflow_feature_id: meta.specflow_feature_id,
-    specflow_phase: meta.specflow_phase,
-    specflow_project_id: meta.specflow_project_id,
-    worktree_path: worktreePath,
-    main_branch: mainBranch,
-    retry_count: retryCount,
-    eval_feedback: feedback,
-    // Carry GitHub metadata for evaluator dedup
-    github_issue_url: meta.github_issue_url,
-    github_issue_number: meta.github_issue_number,
-    github_repo: meta.github_repo,
-  };
-
-  bb.createWorkItem({
-    id: `specflow-${meta.specflow_feature_id}-${meta.specflow_phase}-retry${retryCount}`,
-    title: `SpecFlow ${meta.specflow_phase} (retry ${retryCount}): ${meta.specflow_feature_id}`,
-    description: `SpecFlow phase "${meta.specflow_phase}" retry for feature ${meta.specflow_feature_id}\n\nEval feedback:\n${feedback}`,
-    project: meta.specflow_project_id,
-    source: 'specflow',
-    sourceRef: meta.github_issue_url ?? meta.specflow_feature_id,
-    priority: item.priority ?? 'P2',
-    metadata: JSON.stringify(newMeta),
-  });
 }
 
 // ─── Implement phase handling ──────────────────────────────────────────

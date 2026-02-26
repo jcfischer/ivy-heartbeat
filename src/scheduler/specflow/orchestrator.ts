@@ -1,5 +1,5 @@
-import { join } from 'node:path';
-import { existsSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { existsSync, mkdirSync, symlinkSync, lstatSync } from 'node:fs';
 import type { Blackboard } from '../../blackboard.ts';
 import type { SpecFlowFeature } from 'ivy-blackboard/src/types';
 import {
@@ -126,6 +126,38 @@ async function releaseStuckFeatures(
 }
 
 /**
+ * Symlink .specflow/ from the source repo into the worktree.
+ * .specflow/ is gitignored so worktrees don't get it automatically.
+ * Symlink means all agents share one DB — no divergent copies.
+ */
+function ensureSpecflowInWorktree(worktreePath: string, projectPath: string): void {
+  const sourceSpecflowDir = join(projectPath, '.specflow');
+  if (!existsSync(join(sourceSpecflowDir, 'features.db'))) return;
+
+  const worktreeSpecflowDir = join(worktreePath, '.specflow');
+  if (existsSync(join(worktreeSpecflowDir, 'features.db'))) return; // already there
+
+  try {
+    if (!existsSync(worktreeSpecflowDir)) {
+      mkdirSync(dirname(worktreeSpecflowDir), { recursive: true });
+      symlinkSync(sourceSpecflowDir, worktreeSpecflowDir, 'dir');
+    } else {
+      // Directory exists (possibly empty from git checkout) — symlink DB files individually
+      const featuresDest = join(worktreeSpecflowDir, 'features.db');
+      if (!existsSync(featuresDest)) {
+        symlinkSync(join(sourceSpecflowDir, 'features.db'), featuresDest);
+      }
+      const evalsDest = join(worktreeSpecflowDir, 'evals.db');
+      if (!existsSync(evalsDest) && existsSync(join(sourceSpecflowDir, 'evals.db'))) {
+        symlinkSync(join(sourceSpecflowDir, 'evals.db'), evalsDest);
+      }
+    }
+  } catch {
+    // Non-fatal — specflow will fall back or fail with a clear error
+  }
+}
+
+/**
  * Set up or reuse a worktree for a feature. Returns the worktree path.
  */
 async function setupWorktree(
@@ -133,11 +165,15 @@ async function setupWorktree(
   projectPath: string,
 ): Promise<string> {
   const branch = `specflow-${feature.feature_id.toLowerCase()}`;
+  let worktreePath: string;
   if (feature.worktree_path) {
-    return ensureWorktree(projectPath, feature.worktree_path, branch);
+    worktreePath = await ensureWorktree(projectPath, feature.worktree_path, branch);
+  } else {
+    // createWorktree computes the path from IVY_WORKTREE_DIR and returns it
+    worktreePath = await createWorktree(projectPath, branch, feature.project_id);
   }
-  // createWorktree computes the path from IVY_WORKTREE_DIR and returns it
-  return createWorktree(projectPath, branch, feature.project_id);
+  ensureSpecflowInWorktree(worktreePath, projectPath);
+  return worktreePath;
 }
 
 /**
@@ -411,6 +447,14 @@ export async function orchestrateSpecFlow(
             result.featuresFailed++;
             if (phaseRes.error) {
               result.errors.push({ featureId: feature.feature_id, error: phaseRes.error });
+            }
+          } else {
+            // Phase succeeded — immediately run gate check so we don't need
+            // an extra heartbeat cycle to advance. Re-read fresh feature state.
+            const fresh = bb.getFeature(feature.feature_id);
+            if (fresh && fresh.phase.endsWith('ing') && fresh.status === 'succeeded') {
+              const gateAdvanced = await checkGateAndAdvance(fresh, bb, sid);
+              if (gateAdvanced) result.featuresAdvanced++;
             }
           }
           break;

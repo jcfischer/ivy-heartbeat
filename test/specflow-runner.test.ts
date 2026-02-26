@@ -154,7 +154,7 @@ afterEach(() => {
 
 describe('specflow-runner', () => {
   describe('specify phase', () => {
-    test('calls specflow specify --batch and chains plan on success', async () => {
+    test('calls specflow specify and returns completed on success', async () => {
       const meta = makeMeta({ specflow_phase: 'specify' });
       const item = makeWorkItem(meta);
 
@@ -168,7 +168,7 @@ describe('specflow-runner', () => {
       // Register agent so runSpecFlowPhase can log events
       ctx.bb.registerAgent({ name: 'test', project: 'test-proj', work: item.item_id });
 
-      await runSpecFlowPhase(
+      const result = await runSpecFlowPhase(
         ctx.bb,
         item,
         { project_id: 'test-proj', local_path: '/tmp/test-project' },
@@ -184,19 +184,13 @@ describe('specflow-runner', () => {
       const evalCall = spawnerCalls.find((c) => c.args[0] === 'eval');
       expect(evalCall).toBeDefined();
 
-      // Should have created a plan work item
-      const items = ctx.bb.listWorkItems({ all: true });
-      const planItem = items.find((i) => {
-        const m = JSON.parse(i.metadata ?? '{}');
-        return m.specflow_phase === 'plan';
-      });
-      expect(planItem).toBeDefined();
-      expect(planItem!.source).toBe('specflow');
+      // Phase completed — orchestrator handles advancement, no chaining
+      expect(result.status).toBe('completed');
     });
   });
 
   describe('plan phase', () => {
-    test('reuses worktree from metadata and chains tasks', async () => {
+    test('reuses worktree from metadata and returns completed on success', async () => {
       const meta = makeMeta({
         specflow_phase: 'plan',
         worktree_path: '/tmp/worktree/test-proj/specflow-f-001',
@@ -212,7 +206,7 @@ describe('specflow-runner', () => {
 
       ctx.bb.registerAgent({ name: 'test', project: 'test-proj', work: item.item_id });
 
-      await runSpecFlowPhase(
+      const result = await runSpecFlowPhase(
         ctx.bb,
         item,
         { project_id: 'test-proj', local_path: '/tmp/test-project' },
@@ -224,18 +218,13 @@ describe('specflow-runner', () => {
       expect(planCall).toBeDefined();
       expect(planCall!.args).toEqual(['plan', 'F-001']);
 
-      // Should chain tasks phase
-      const items = ctx.bb.listWorkItems({ all: true });
-      const tasksItem = items.find((i) => {
-        const m = JSON.parse(i.metadata ?? '{}');
-        return m.specflow_phase === 'tasks';
-      });
-      expect(tasksItem).toBeDefined();
+      // Phase completed — orchestrator handles advancement, no chaining
+      expect(result.status).toBe('completed');
     });
   });
 
   describe('tasks phase', () => {
-    test('chains implement phase (no quality gate)', async () => {
+    test('runs tasks phase (no quality gate) and returns completed', async () => {
       const meta = makeMeta({
         specflow_phase: 'tasks',
         worktree_path: '/tmp/worktree/test-proj/specflow-f-001',
@@ -250,7 +239,7 @@ describe('specflow-runner', () => {
 
       ctx.bb.registerAgent({ name: 'test', project: 'test-proj', work: item.item_id });
 
-      await runSpecFlowPhase(
+      const result = await runSpecFlowPhase(
         ctx.bb,
         item,
         { project_id: 'test-proj', local_path: '/tmp/test-project' },
@@ -264,18 +253,13 @@ describe('specflow-runner', () => {
       // No eval call — tasks has no quality gate (only init + status + tasks + phase)
       expect(spawnerCalls.filter((c) => !['init', 'status', 'phase'].includes(c.args[0]))).toHaveLength(1);
 
-      // Should chain implement
-      const items = ctx.bb.listWorkItems({ all: true });
-      const implItem = items.find((i) => {
-        const m = JSON.parse(i.metadata ?? '{}');
-        return m.specflow_phase === 'implement';
-      });
-      expect(implItem).toBeDefined();
+      // Phase completed — orchestrator handles advancement, no chaining
+      expect(result.status).toBe('completed');
     });
   });
 
   describe('quality gate', () => {
-    test('gate pass (score >= 80%) chains next phase', async () => {
+    test('gate pass (score >= 80%) returns completed status', async () => {
       const meta = makeMeta({ specflow_phase: 'specify' });
       const item = makeWorkItem(meta);
 
@@ -287,23 +271,18 @@ describe('specflow-runner', () => {
 
       ctx.bb.registerAgent({ name: 'test', project: 'test-proj', work: item.item_id });
 
-      await runSpecFlowPhase(
+      const result = await runSpecFlowPhase(
         ctx.bb,
         item,
         { project_id: 'test-proj', local_path: '/tmp/test-project' },
         'test-session'
       );
 
-      // Should chain plan (gate passed at exactly 80%)
-      const items = ctx.bb.listWorkItems({ all: true });
-      const planItem = items.find((i) => {
-        const m = JSON.parse(i.metadata ?? '{}');
-        return m.specflow_phase === 'plan';
-      });
-      expect(planItem).toBeDefined();
+      // Gate passed at exactly 80% — orchestrator handles advancement, no chaining
+      expect(result.status).toBe('completed');
     });
 
-    test('gate fail (first attempt) creates retry with feedback', async () => {
+    test('gate fail (first attempt) returns retry status', async () => {
       const meta = makeMeta({ specflow_phase: 'specify', retry_count: 0 });
       const item = makeWorkItem(meta);
 
@@ -319,29 +298,19 @@ describe('specflow-runner', () => {
 
       ctx.bb.registerAgent({ name: 'test', project: 'test-proj', work: item.item_id });
 
-      await runSpecFlowPhase(
+      const result = await runSpecFlowPhase(
         ctx.bb,
         item,
         { project_id: 'test-proj', local_path: '/tmp/test-project' },
         'test-session'
       );
 
-      // Should create retry item, not chain next
+      // Gate failed — orchestrator handles retry scheduling, runner just signals retry
+      expect(result.status).toBe('retry');
+
+      // Should NOT create any new work items — orchestrator handles that
       const items = ctx.bb.listWorkItems({ all: true });
-      const retryItem = items.find((i) => i.item_id.includes('retry'));
-      expect(retryItem).toBeDefined();
-
-      const retryMeta = JSON.parse(retryItem!.metadata ?? '{}');
-      expect(retryMeta.specflow_phase).toBe('specify');
-      expect(retryMeta.retry_count).toBe(1);
-      expect(retryMeta.eval_feedback).toContain('Missing edge cases');
-
-      // Should NOT create plan item
-      const planItem = items.find((i) => {
-        const m = JSON.parse(i.metadata ?? '{}');
-        return m.specflow_phase === 'plan';
-      });
-      expect(planItem).toBeUndefined();
+      expect(items.filter((i) => i.item_id !== item.item_id)).toHaveLength(0);
     });
 
     test('gate fail (max retries exceeded) does not create retry', async () => {
@@ -373,8 +342,8 @@ describe('specflow-runner', () => {
     });
   });
 
-  describe('work item chaining', () => {
-    test('chained item inherits feature_id, worktree_path, priority', async () => {
+  describe('phase execution', () => {
+    test('tasks phase passes feature_id and worktree metadata to spawner', async () => {
       const meta = makeMeta({
         specflow_phase: 'tasks',
         worktree_path: '/tmp/my-worktree',
@@ -389,26 +358,20 @@ describe('specflow-runner', () => {
 
       ctx.bb.registerAgent({ name: 'test', project: 'test-proj', work: item.item_id });
 
-      await runSpecFlowPhase(
+      const result = await runSpecFlowPhase(
         ctx.bb,
         item,
         { project_id: 'test-proj', local_path: '/tmp/test-project' },
         'test-session'
       );
 
-      const items = ctx.bb.listWorkItems({ all: true });
-      const implItem = items.find((i) => {
-        const m = JSON.parse(i.metadata ?? '{}');
-        return m.specflow_phase === 'implement';
-      });
+      // Verify tasks CLI was called with the correct feature ID
+      const tasksCall = spawnerCalls.find((c) => c.args[0] === 'tasks');
+      expect(tasksCall).toBeDefined();
+      expect(tasksCall!.args).toContain('F-001');
 
-      expect(implItem).toBeDefined();
-      expect(implItem!.priority).toBe('P1');
-
-      const implMeta = JSON.parse(implItem!.metadata ?? '{}');
-      expect(implMeta.specflow_feature_id).toBe('F-001');
-      expect(implMeta.worktree_path).toBe('/tmp/my-worktree');
-      expect(implMeta.main_branch).toBe('develop');
+      // Phase completed — no chaining (orchestrator handles advancement)
+      expect(result.status).toBe('completed');
     });
   });
 

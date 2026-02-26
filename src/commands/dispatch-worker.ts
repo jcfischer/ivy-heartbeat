@@ -407,6 +407,18 @@ export function registerDispatchWorkerCommand(
       // Determine if this is a SpecFlow work item
       const sfMeta = parseSpecFlowMeta(item.metadata);
       if (sfMeta) {
+        // When the new orchestrator is active, silently complete residual work items
+        if (process.env.SPECFLOW_ORCHESTRATOR === 'true') {
+          bb.completeWorkItem(itemId, sessionId);
+          bb.appendEvent({
+            actorId: sessionId,
+            targetId: itemId,
+            summary: `SpecFlow work item skipped — orchestrator active (SPECFLOW_ORCHESTRATOR=true)`,
+            metadata: { phase: sfMeta.specflow_phase, featureId: sfMeta.specflow_feature_id },
+          });
+          try { bb.deregisterAgent(sessionId); } catch { /* best effort */ }
+          return;
+        }
         try {
           const sfResult = await runSpecFlowPhase(bb, item, {
             project_id: item.project_id!,

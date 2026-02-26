@@ -5,6 +5,7 @@ All notable changes to ivy-heartbeat are documented here.
 ## [Unreleased]
 
 ### Added
+- **F-027 SpecFlow centralized orchestrator** — new `specflow_orchestrate` evaluator drives all SpecFlow feature advancement via `specflow_features` table instead of work-item chaining; includes quality-gate and code-gate executors, `SPECFLOW_ORCHESTRATOR` feature flag, and scheduler/dispatch-worker guards that silently complete residual specflow work items when orchestrator is active
 - **F-023 GitLab CLI support for dispatch pipeline**: The SpecFlow dispatch pipeline (PR creation, merge, review, issue watching, rework, merge-fix) is hardcoded to the GitHub `gh` CLI. Projects hosted on GitLab cannot use the automated implement-review-merge workflow. This feature adds GitLab CLI (`glab`) support with VCS abstraction layer.
 - **F-025 Wire reflect phase into dispatch pipeline**: The REFLECT phase exists as working code but is architecturally isolated from the dispatch pipeline. When a PR merges successfully, no reflect work item is created on the blackboard. Even if one were created manually, the scheduler has no handler to dispatch it.
 - **F-024: Enhanced PR body generation** — PRs now include feature summary from spec, implementation approach from plan, and files changed table instead of stub references

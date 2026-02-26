@@ -398,6 +398,29 @@ export async function dispatch(
       // SpecFlow detection: delegate to specflow runner
       const sfMeta = parseSpecFlowMeta(item.metadata);
       if (sfMeta) {
+        // When the new orchestrator is active, specflow phases are driven
+        // by the specflow_features table. Any residual specflow work items
+        // (created before cutover) should be silently completed so they
+        // don't block the dispatch queue.
+        if (process.env.SPECFLOW_ORCHESTRATOR === 'true') {
+          bb.completeWorkItem(item.item_id, sessionId);
+          bb.appendEvent({
+            actorId: sessionId,
+            targetId: item.item_id,
+            summary: `SpecFlow work item skipped — orchestrator active (SPECFLOW_ORCHESTRATOR=true)`,
+            metadata: { phase: sfMeta.specflow_phase, featureId: sfMeta.specflow_feature_id },
+          });
+          result.dispatched.push({
+            itemId: item.item_id,
+            title: item.title,
+            projectId: item.project_id!,
+            sessionId,
+            exitCode: 0,
+            completed: true,
+            durationMs: 0,
+          });
+          continue;
+        }
         try {
           const sfResult = await runSpecFlowPhase(bb, item, {
             project_id: item.project_id!,
