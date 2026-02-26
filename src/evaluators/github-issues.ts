@@ -209,6 +209,17 @@ export type BlackboardAccessor = {
     metadata?: string;
   }): unknown;
   updateWorkItemMetadata(itemId: string, updates: Record<string, unknown>): unknown;
+  /** Optional: dual-write to specflow_features table (Phase 2 bridge). */
+  createFeature?: (input: {
+    feature_id: string;
+    project_id: string;
+    title: string;
+    source?: string;
+    source_ref?: string;
+    github_issue_number?: number;
+    github_issue_url?: string;
+    github_repo?: string;
+  }) => unknown;
 };
 
 let bbAccessor: BlackboardAccessor | null = null;
@@ -372,6 +383,22 @@ export async function evaluateGithubIssues(item: ChecklistItem): Promise<CheckRe
               priority: 'P2',
               metadata: JSON.stringify(sfMetadata),
             });
+
+            // T-2.1: Dual-write to specflow_features table (Phase 2 bridge)
+            if (bbAccessor.createFeature) {
+              try {
+                bbAccessor.createFeature({
+                  feature_id: featureId,
+                  project_id: project.project_id,
+                  title: issue.title,
+                  source: 'github',
+                  source_ref: issue.url,
+                  github_issue_number: issue.number,
+                  github_issue_url: issue.url,
+                  github_repo: ownerRepo,
+                });
+              } catch { /* non-fatal — work item already created */ }
+            }
 
             totalNew++;
             newIssueDetails.push({

@@ -36,7 +36,16 @@ import {
   type UpdateWorkItemMetadataResult,
 } from 'ivy-blackboard/src/work';
 import { listProjects, type ProjectWithCounts } from 'ivy-blackboard/src/project';
-import type { BlackboardProject, BlackboardWorkItem } from 'ivy-blackboard/src/types';
+import type { BlackboardProject, BlackboardWorkItem, SpecFlowFeature } from 'ivy-blackboard/src/types';
+import {
+  createFeature,
+  getFeature,
+  updateFeature,
+  listFeatures,
+  getActionableFeatures,
+  type CreateFeatureInput,
+  type ListFeaturesOptions,
+} from 'ivy-blackboard/src/specflow-features';
 import { HeartbeatQueryRepository } from './repositories/heartbeats.ts';
 import { EventQueryRepository } from './repositories/events.ts';
 import { setupFTS5 } from './fts.ts';
@@ -168,6 +177,28 @@ export class Blackboard {
       );
   }
 
+  // ─── SpecFlow features (delegated to ivy-blackboard) ─────────────────
+
+  createFeature(input: CreateFeatureInput): SpecFlowFeature {
+    return createFeature(this.db, input);
+  }
+
+  getFeature(featureId: string): SpecFlowFeature | null {
+    return getFeature(this.db, featureId);
+  }
+
+  updateFeature(featureId: string, updates: Partial<Omit<SpecFlowFeature, 'feature_id' | 'created_at'>>): SpecFlowFeature {
+    return updateFeature(this.db, featureId, updates);
+  }
+
+  listFeatures(opts?: ListFeaturesOptions): SpecFlowFeature[] {
+    return listFeatures(this.db, opts);
+  }
+
+  getActionableFeatures(maxConcurrent: number): SpecFlowFeature[] {
+    return getActionableFeatures(this.db, maxConcurrent);
+  }
+
   close(): void {
     closeDatabase(this.db);
   }
@@ -204,6 +235,9 @@ export type {
 } from 'ivy-blackboard/src/work';
 
 export type { ProjectWithCounts } from 'ivy-blackboard/src/project';
+
+export type { SpecFlowFeature } from 'ivy-blackboard/src/types';
+export type { CreateFeatureInput, ListFeaturesOptions } from 'ivy-blackboard/src/specflow-features';
 
 export * from './parser/types.ts';
 export { HeartbeatQueryRepository } from './repositories/heartbeats.ts';

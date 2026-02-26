@@ -92,6 +92,35 @@ export function startServer(bb: Blackboard, opts: Partial<ServerOptions> = {}) {
           return Response.json(results, { headers });
         }
 
+        // API: SpecFlow features list (T-2.5)
+        if (path === '/api/specflow/features') {
+          const projectId = url.searchParams.get('project') ?? undefined;
+          const phase = url.searchParams.get('phase') ?? undefined;
+          const status = url.searchParams.get('status') ?? undefined;
+          const features = bb.listFeatures({ projectId, phase, status });
+          return Response.json(features, { headers });
+        }
+
+        // API: SpecFlow feature by ID (T-2.6)
+        const featureMatch = path.match(/^\/api\/specflow\/features\/([^/]+)$/);
+        if (featureMatch) {
+          const featureId = decodeURIComponent(featureMatch[1]);
+          const feature = bb.getFeature(featureId);
+          if (!feature) {
+            return Response.json({ error: 'Feature not found' }, { status: 404, headers });
+          }
+          return Response.json(feature, { headers });
+        }
+
+        // API: SpecFlow feature events (T-2.7)
+        const featureEventsMatch = path.match(/^\/api\/specflow\/features\/([^/]+)\/events$/);
+        if (featureEventsMatch) {
+          const featureId = decodeURIComponent(featureEventsMatch[1]);
+          const limit = parseInt(url.searchParams.get('limit') ?? '50', 10);
+          const events = bb.eventQueries.search(featureId, { limit });
+          return Response.json(events, { headers });
+        }
+
         // 404
         return Response.json(
           { error: 'Not found' },
