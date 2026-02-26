@@ -466,82 +466,100 @@ export async function orchestrateSpecFlow(
 
   for (const feature of actionable) {
     result.featuresProcessed++;
-    const action = determineAction(feature, config.phaseTimeoutMin);
 
-    try {
-      switch (action.type) {
-        case 'wait':
-          break;
+    // Drain loop: keep processing this feature until it blocks (run-phase) or
+    // reaches a terminal/wait state. This avoids burning extra heartbeat cycles
+    // (up to 60 min each) on instant transitions like advance and gate checks.
+    let current: SpecFlowFeature | null = feature;
+    while (current) {
+      const action = determineAction(current, config.phaseTimeoutMin);
+      let continueWithFeature = false;
 
-        case 'release':
-          // Shouldn't happen after first pass, but handle defensively
-          bb.updateFeature(feature.feature_id, {
-            status: 'pending',
-            current_session: null,
-            last_error: action.reason,
-          });
-          result.featuresReleased++;
-          break;
+      try {
+        switch (action.type) {
+          case 'wait':
+            break;
 
-        case 'fail':
-          bb.updateFeature(feature.feature_id, {
-            phase: 'failed',
-            status: 'failed',
-            last_error: action.reason,
-          });
-          bb.appendEvent({
-            actorId: sid,
-            targetId: feature.feature_id,
-            summary: `Feature ${feature.feature_id} marked failed: ${action.reason}`,
-            metadata: { featureId: feature.feature_id, reason: action.reason },
-          });
-          result.featuresFailed++;
-          break;
+          case 'release':
+            // Shouldn't happen after first pass, but handle defensively
+            bb.updateFeature(current.feature_id, {
+              status: 'pending',
+              current_session: null,
+              last_error: action.reason,
+            });
+            result.featuresReleased++;
+            continueWithFeature = true; // re-evaluate after release
+            break;
 
-        case 'advance':
-          bb.updateFeature(feature.feature_id, {
-            phase: action.toPhase as SpecFlowFeature['phase'],
-            status: 'pending',
-          });
-          bb.appendEvent({
-            actorId: sid,
-            targetId: feature.feature_id,
-            summary: `Advanced ${feature.feature_id}: ${action.fromPhase} → ${action.toPhase}`,
-            metadata: { fromPhase: action.fromPhase, toPhase: action.toPhase },
-          });
-          result.featuresAdvanced++;
-          break;
-
-        case 'check-gate': {
-          const gateAdvanced = await checkGateAndAdvance(feature, bb, sid);
-          if (gateAdvanced) result.featuresAdvanced++;
-          break;
-        }
-
-        case 'run-phase': {
-          const phaseRes = await runPhase(feature, bb, config, sid);
-          if (phaseRes.failed) {
+          case 'fail':
+            bb.updateFeature(current.feature_id, {
+              phase: 'failed',
+              status: 'failed',
+              last_error: action.reason,
+            });
+            bb.appendEvent({
+              actorId: sid,
+              targetId: current.feature_id,
+              summary: `Feature ${current.feature_id} marked failed: ${action.reason}`,
+              metadata: { featureId: current.feature_id, reason: action.reason },
+            });
             result.featuresFailed++;
-            if (phaseRes.error) {
-              result.errors.push({ featureId: feature.feature_id, error: phaseRes.error });
+            break;
+
+          case 'advance':
+            bb.updateFeature(current.feature_id, {
+              phase: action.toPhase as SpecFlowFeature['phase'],
+              status: 'pending',
+            });
+            bb.appendEvent({
+              actorId: sid,
+              targetId: current.feature_id,
+              summary: `Advanced ${current.feature_id}: ${action.fromPhase} → ${action.toPhase}`,
+              metadata: { fromPhase: action.fromPhase, toPhase: action.toPhase },
+            });
+            result.featuresAdvanced++;
+            continueWithFeature = true; // immediately run the phase we advanced into
+            break;
+
+          case 'check-gate': {
+            const gateAdvanced = await checkGateAndAdvance(current, bb, sid);
+            if (gateAdvanced) {
+              result.featuresAdvanced++;
+              continueWithFeature = true; // gate passed → advance to next phase immediately
             }
-          } else {
-            // Phase succeeded — immediately run gate check so we don't need
-            // an extra heartbeat cycle to advance. Re-read fresh feature state.
-            const fresh = bb.getFeature(feature.feature_id);
-            if (fresh && fresh.phase.endsWith('ing') && fresh.status === 'succeeded') {
-              const gateAdvanced = await checkGateAndAdvance(fresh, bb, sid);
-              if (gateAdvanced) result.featuresAdvanced++;
-            }
+            break;
           }
-          break;
+
+          case 'run-phase': {
+            const phaseRes = await runPhase(current, bb, config, sid);
+            if (phaseRes.failed) {
+              result.featuresFailed++;
+              if (phaseRes.error) {
+                result.errors.push({ featureId: current.feature_id, error: phaseRes.error });
+              }
+            } else {
+              // Phase succeeded — immediately run gate check
+              const fresh = bb.getFeature(current.feature_id);
+              if (fresh && fresh.phase.endsWith('ing') && fresh.status === 'succeeded') {
+                const gateAdvanced = await checkGateAndAdvance(fresh, bb, sid);
+                if (gateAdvanced) {
+                  result.featuresAdvanced++;
+                  continueWithFeature = true; // gate passed → advance to next phase immediately
+                }
+              }
+            }
+            break;
+          }
         }
+      } catch (err) {
+        result.errors.push({
+          featureId: current.feature_id,
+          error: `Unhandled error: ${err}`,
+        });
+        continueWithFeature = false;
       }
-    } catch (err) {
-      result.errors.push({
-        featureId: feature.feature_id,
-        error: `Unhandled error: ${err}`,
-      });
+
+      current = continueWithFeature ? (bb.getFeature(feature.feature_id) ?? null) : null;
     }
   }
 
