@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { readdirSync } from 'node:fs';
+import { readdirSync, statSync } from 'node:fs';
 import { runSpecflowCli, parseEvalScore } from '../infra/specflow-cli.ts';
 
 export const PHASE_EVAL_THRESHOLDS: Record<string, number> = {
@@ -8,8 +8,8 @@ export const PHASE_EVAL_THRESHOLDS: Record<string, number> = {
 };
 
 export const PHASE_RUBRICS: Record<string, string> = {
-  specifying: 'spec',
-  planning: 'plan',
+  specifying: 'spec-quality',
+  planning: 'plan-quality',
 };
 
 export const PHASE_ARTIFACTS: Record<string, string> = {
@@ -31,9 +31,12 @@ function findFeatureDir(specDir: string, featureId: string): string | null {
     const entries = readdirSync(specDir, { withFileTypes: true });
     const prefix = featureId.toLowerCase();
     for (const entry of entries) {
-      if (entry.isDirectory() && entry.name.toLowerCase().startsWith(prefix)) {
-        return join(specDir, entry.name);
-      }
+      if (!entry.name.toLowerCase().startsWith(prefix)) continue;
+      // Use statSync (follows symlinks) so symlinked spec dirs are found too
+      try {
+        const stat = statSync(join(specDir, entry.name));
+        if (stat.isDirectory()) return join(specDir, entry.name);
+      } catch { /* broken symlink or permission error — skip */ }
     }
   } catch {
     // specDir doesn't exist

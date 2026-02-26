@@ -158,6 +158,27 @@ queued → specifying → specified → planning → planned →
 
 ---
 
+## Error Handling
+
+### API Errors
+
+| Error Scenario | User-Visible Behavior | Recovery |
+|---|---|---|
+| `/api/specflow/panel` returns 500 | "Unable to load pipeline data" message in panel area | Retry on next 30s refresh cycle |
+| `/api/specflow/features/:id/events` returns 404 | Inline "No events found for this feature" | Collapse expander, no crash |
+| Network timeout (> 5s) | Show stale data with "(stale)" indicator, soft error in console | Auto-retry on next refresh |
+| `bb.listFeatures()` throws | Server logs error; panel endpoint returns `{ error: "..." }` JSON with 500 | Heartbeat continues unaffected |
+
+### Edge Cases
+
+- **Null fields:** `pr_url`, `last_error`, `specify_score`, `plan_score`, `implement_score` may be null — render as `—` or omit gracefully
+- **Empty feature list:** Show "No active SpecFlow features" placeholder — not an error state
+- **Very long `last_error`:** Truncate to 120 chars in tooltip; full text on expand
+- **Invalid phase value:** Unknown phases render as gray with raw phase name — no crash
+- **Concurrent refresh:** If user clicks expand during refresh, preserve expanded state
+
+---
+
 ## Non-Functional Requirements
 
 ### NFR-1: No New Dependencies
@@ -171,6 +192,18 @@ Dashboard is inline CSS + vanilla JS. No frontend framework. No additional npm p
 ### NFR-3: No Breaking Changes
 
 The `/api/specflow/features` endpoint (clean JSON) remains unchanged. Only the `/api/specflow/panel` HTML response changes.
+
+### NFR-4: Security
+
+- Panel endpoint only accessible on `localhost:7878` (local-only dashboard — no public exposure)
+- `last_error` and feature titles rendered via `textContent` (not `innerHTML`) — no XSS risk from agent-generated error strings
+- No authentication required (localhost-only, same-machine operator assumed)
+
+### NFR-5: Accessibility
+
+- Phase badges use color + text labels (not color alone) to be colorblind-accessible
+- Click targets (feature rows) minimum 44px height per touch target guidelines
+- Keyboard navigation: Enter/Space opens event timeline for focused row
 
 ---
 

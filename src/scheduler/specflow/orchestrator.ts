@@ -158,6 +158,36 @@ function ensureSpecflowInWorktree(worktreePath: string, projectPath: string): vo
 }
 
 /**
+ * Symlink the feature's spec directory from the source repo into the worktree.
+ * The specflow CLI writes spec artifacts (spec.md, plan.md, etc.) to the absolute
+ * spec_path which lives in the source repo. Quality gates check the worktree path.
+ * Symlinking ensures gates can find the artifacts without copying files.
+ */
+function ensureSpecDirInWorktree(worktreePath: string, projectPath: string, featureId: string): void {
+  try {
+    const { readdirSync } = require('node:fs');
+    const srcSpecsDir = join(projectPath, '.specify', 'specs');
+    const entries = readdirSync(srcSpecsDir, { withFileTypes: true });
+    const prefix = featureId.toLowerCase();
+    const srcEntry = entries.find(
+      (e: { isDirectory: () => boolean; name: string }) => e.isDirectory() && e.name.toLowerCase().startsWith(prefix)
+    );
+    if (!srcEntry) return; // no spec dir in source repo yet
+
+    const srcDir = join(srcSpecsDir, srcEntry.name);
+    const destSpecsDir = join(worktreePath, '.specify', 'specs');
+    const destDir = join(destSpecsDir, srcEntry.name);
+
+    if (existsSync(destDir)) return; // already there
+
+    mkdirSync(destSpecsDir, { recursive: true });
+    symlinkSync(srcDir, destDir, 'dir');
+  } catch {
+    // Non-fatal
+  }
+}
+
+/**
  * Set up or reuse a worktree for a feature. Returns the worktree path.
  */
 async function setupWorktree(
@@ -173,6 +203,7 @@ async function setupWorktree(
     worktreePath = await createWorktree(projectPath, branch, feature.project_id);
   }
   ensureSpecflowInWorktree(worktreePath, projectPath);
+  ensureSpecDirInWorktree(worktreePath, projectPath, feature.feature_id);
   return worktreePath;
 }
 

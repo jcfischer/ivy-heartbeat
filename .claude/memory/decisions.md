@@ -1,5 +1,11 @@
 # Decisions Log
 
+## 2026-02-26 - F-027 Phase 4: Switchover via feature flag
+- Decision: `SPECFLOW_ORCHESTRATOR=false` in `.env` (gitignored); heartbeat config gets `specflow_orchestrate` section (enabled: true); chain functions get early-return guards
+- Rationale: Safe rollback — flip flag back to false, old chain-based flow resumes immediately. Chain functions preserved until Phase 5 cleanup confirms no issues.
+- Commit: `c68be00`
+- Manual tasks pending: T-4.4 (smoke test with flag=true), T-4.5 (monitor 2-3 cycles)
+
 ## 2026-02-26 - F-027 Phase 3: queued phase handled via advance
 - Decision: `queued` ends with 'ed', so `determineAction()` routes it through `advance` (queued → specifying), not `run-phase`
 - Rationale: Consistent with the state machine — `queued` is a seed state like `specified`. The `SpecifyExecutor.canRun()` only handles `specifying` (and `specifying` retry), not `queued`.
