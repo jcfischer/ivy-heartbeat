@@ -4,6 +4,7 @@ import type { Blackboard } from '../../../blackboard.ts';
 import type { PhaseExecutor, PhaseExecutorOptions, PhaseResult, SpecFlowFeature } from '../types.ts';
 import { runSpecflowCli } from '../infra/specflow-cli.ts';
 import { getLauncher } from '../../launcher.ts';
+import { extractOwnerRepo } from '../../../evaluators/github-issues.ts';
 import {
   commitFiles,
   pushBranch,
@@ -138,8 +139,9 @@ export class CompleteExecutor implements PhaseExecutor {
       metadata: { prNumber: pr.number, prUrl: pr.url, branch },
     });
 
-    // Create code review work item
-    const repo = feature.github_repo;
+    // Create code review work item — resolve repo from feature record or project remote_repo
+    const repo = feature.github_repo
+      ?? extractOwnerRepo(bb.getProject(feature.project_id)?.remote_repo ?? '');
     if (repo) {
       this.createReviewWorkItem(bb, featureId, feature.project_id, pr, branch, mainBranch, repo);
     }
