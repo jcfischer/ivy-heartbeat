@@ -7,6 +7,7 @@ export {
   ensureWorktree,
   removeWorktree,
   commitAll,
+  commitFiles,
   pushBranch,
   createPR,
   getCurrentBranch,

@@ -5,7 +5,7 @@ import type { PhaseExecutor, PhaseExecutorOptions, PhaseResult, SpecFlowFeature 
 import { runSpecflowCli } from '../infra/specflow-cli.ts';
 import { getLauncher } from '../../launcher.ts';
 import {
-  commitAll,
+  commitFiles,
   pushBranch,
   createPR,
   getCurrentBranch,
@@ -92,8 +92,17 @@ export class CompleteExecutor implements PhaseExecutor {
       return { status: 'failed', error: `specflow complete exited ${sfResult.exitCode}: ${sfResult.stderr}` };
     }
 
-    // Commit any completion artifacts
-    const sha = await commitAll(worktreePath, `chore(specflow): ${featureId} completion artifacts`);
+    // Commit completion artifacts — target only known output files to avoid
+    // staging untracked .specify/ spec files that may contain personal paths
+    // and trip gitleaks pre-commit hooks.
+    const artifactFiles = ['CHANGELOG.md'];
+    if (featureDir) {
+      // featureDir is absolute; compute relative path for git add
+      const relDir = featureDir.slice(worktreePath.length).replace(/^\//, '');
+      artifactFiles.push(join(relDir, 'docs.md'));
+      artifactFiles.push(join(relDir, 'verify.md'));
+    }
+    const sha = await commitFiles(worktreePath, artifactFiles, `chore(specflow): ${featureId} completion artifacts`);
     if (sha) {
       bb.appendEvent({
         actorId: sessionId,

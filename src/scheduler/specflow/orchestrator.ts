@@ -552,10 +552,20 @@ export async function orchestrateSpecFlow(
           }
         }
       } catch (err) {
-        result.errors.push({
-          featureId: current.feature_id,
-          error: `Unhandled error: ${err}`,
-        });
+        const errMsg = `Unhandled error: ${err}`;
+        result.errors.push({ featureId: current.feature_id, error: errMsg });
+        // Reset feature from active to pending so it can be retried
+        try {
+          const stuck = bb.getFeature(current.feature_id);
+          if (stuck?.status === 'active') {
+            bb.updateFeature(current.feature_id, {
+              status: 'pending',
+              current_session: null,
+              failure_count: (stuck.failure_count ?? 0) + 1,
+              last_error: errMsg,
+            });
+          }
+        } catch {}
         continueWithFeature = false;
       }
 

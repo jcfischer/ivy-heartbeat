@@ -417,6 +417,42 @@ export async function commitAll(
 }
 
 /**
+ * Stage only specific files and commit. Returns the commit SHA, or null
+ * if nothing was staged or there was nothing to commit.
+ *
+ * Prefer this over commitAll() when you know which files to commit — it
+ * avoids staging untracked files that may contain personal paths and
+ * trigger pre-commit hooks (e.g. gitleaks).
+ */
+export async function commitFiles(
+  worktreePath: string,
+  files: string[],
+  message: string
+): Promise<string | null> {
+  // Stage each specified file; skip silently if the file doesn't exist
+  for (const file of files) {
+    try {
+      await git(['add', file], worktreePath);
+    } catch {
+      // File may not exist — move on
+    }
+  }
+
+  // Check if anything was actually staged
+  const status = await git(['status', '--porcelain'], worktreePath);
+  const hasStagedChanges = status
+    .split('\n')
+    .some(line => line.length >= 2 && line[0] !== ' ' && line[0] !== '?');
+  if (!hasStagedChanges) {
+    return null; // Nothing to commit
+  }
+
+  await git(['commit', '-m', message], worktreePath);
+  const sha = await git(['rev-parse', 'HEAD'], worktreePath);
+  return sha;
+}
+
+/**
  * Check whether the current branch has commits ahead of the given base branch.
  */
 export async function hasCommitsAhead(
