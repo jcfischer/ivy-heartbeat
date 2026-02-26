@@ -106,6 +106,39 @@ export function determineAction(
 }
 
 /**
+ * Release all features currently marked active.
+ *
+ * Call this on server startup: any feature that was active belongs to the
+ * previous server process (now dead). Releasing them immediately lets the
+ * new process re-dispatch without waiting for the stale timeout.
+ */
+export function releaseOrphanedFeatures(bb: Blackboard, sessionId: string): number {
+  let released = 0;
+  const features = bb.listFeatures({ status: 'active' });
+  for (const feature of features) {
+    try {
+      bb.updateFeature(feature.feature_id, {
+        status: 'pending',
+        current_session: null,
+        last_error: 'Released: server restarted (previous session died)',
+      });
+      released++;
+    } catch {
+      // non-fatal
+    }
+  }
+  if (released > 0) {
+    bb.appendEvent({
+      actorId: sessionId,
+      targetId: 'system',
+      summary: `Released ${released} orphaned feature(s) on startup`,
+      metadata: { released },
+    });
+  }
+  return released;
+}
+
+/**
  * Release features whose active session has exceeded the timeout.
  */
 async function releaseStuckFeatures(

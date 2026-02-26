@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import type { CliContext } from '../cli.ts';
 import { startServer } from '../serve/server.ts';
+import { releaseOrphanedFeatures } from '../scheduler/specflow/orchestrator.ts';
 
 export function registerServeCommand(
   parent: Command,
@@ -14,6 +15,14 @@ export function registerServeCommand(
       try {
         const ctx = getContext();
         const port = parseInt(opts.port, 10);
+
+        // Release any features that were active in the previous server process.
+        // Those processes are dead — we must re-dispatch immediately rather than
+        // waiting for the stale timeout.
+        const released = releaseOrphanedFeatures(ctx.bb, `serve-startup-${process.pid}`);
+        if (released > 0) {
+          console.log(`Released ${released} orphaned active feature(s) from previous session.`);
+        }
 
         const server = startServer(ctx.bb, { port });
 
