@@ -1,8 +1,9 @@
 import { join } from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import type { Blackboard } from '../../../blackboard.ts';
 import type { PhaseExecutor, PhaseExecutorOptions, PhaseResult, SpecFlowFeature } from '../types.ts';
 import { runSpecflowCli } from '../infra/specflow-cli.ts';
+import { getLauncher } from '../../launcher.ts';
 import {
   commitAll,
   pushBranch,
@@ -19,6 +20,45 @@ import {
 } from '../../../lib/pr-body-extractor.ts';
 
 const SPECFLOW_TIMEOUT_MS = 30 * 60 * 1000;
+const VERIFY_TIMEOUT_MS = 10 * 60 * 1000;
+
+const VERIFY_PREAMBLE = `EXECUTION MODE: Verification Documentation
+
+You are writing a verify.md document. Do NOT use PAI Algorithm format, ISC creation, or voice notification curls. Go directly to writing the document.
+
+Your ONLY job: write a verify.md that documents end-to-end verification of this feature.
+
+`;
+
+function buildVerifyPrompt(featureId: string, specDir: string): string {
+  const parts: string[] = [VERIFY_PREAMBLE];
+  parts.push(`Write verify.md for SpecFlow feature: ${featureId}\n`);
+
+  for (const file of ['spec.md', 'plan.md', 'tasks.md']) {
+    const path = join(specDir, file);
+    if (existsSync(path)) {
+      try {
+        parts.push(`## ${file}\n${readFileSync(path, 'utf-8')}\n`);
+      } catch {}
+    }
+  }
+
+  parts.push(`
+Write verify.md at: ${join(specDir, 'verify.md')}
+
+The document must:
+1. Have a header: "# ${featureId} Verification Report: [feature title from spec.md]"
+2. Check each functional requirement from spec.md and mark PASS/FAIL based on the actual implementation
+3. Include smoke test results by running \`bun test\` and reporting the output
+4. Include an API Verification section if the feature adds HTTP endpoints
+5. End with "## Final Verdict" — PASS or FAIL with reasoning
+
+Run \`bun test\` to get actual test results. Look at the actual source files to verify each FR was implemented.
+Write the file directly using the Write tool. Do not ask for confirmation.
+`);
+
+  return parts.join('\n');
+}
 
 export class CompleteExecutor implements PhaseExecutor {
   canRun(feature: SpecFlowFeature): boolean {
@@ -34,7 +74,15 @@ export class CompleteExecutor implements PhaseExecutor {
     const { worktreePath, projectPath, sessionId } = opts;
     const mainBranch = feature.main_branch ?? 'main';
 
-    // Run specflow complete (generates docs.md, verify.md, etc.)
+    // Generate verify.md if missing — specflow complete requires it
+    const specRoot = join(worktreePath, '.specify', 'specs');
+    const featureDir = this.findFeatureDir(specRoot, featureId);
+    const verifyPath = featureDir ? join(featureDir, 'verify.md') : null;
+    if (verifyPath && !existsSync(verifyPath)) {
+      await this.generateVerifyMd(featureId, featureDir!, bb, sessionId, worktreePath);
+    }
+
+    // Run specflow complete (generates docs.md, validates verify.md, runs Doctorow gate)
     const sfResult = await runSpecflowCli(
       ['complete', featureId],
       worktreePath,
@@ -63,9 +111,7 @@ export class CompleteExecutor implements PhaseExecutor {
 
     await pushBranch(worktreePath, branch);
 
-    // Build PR body from spec artifacts
-    const specDir = join(worktreePath, '.specify', 'specs');
-    const featureDir = this.findFeatureDir(specDir, featureId);
+    // Build PR body from spec artifacts (reuse featureDir found earlier)
     const prBody = await this.buildPrBody(featureId, featureDir, mainBranch, branch);
 
     const pr = await createPR(
@@ -98,6 +144,31 @@ export class CompleteExecutor implements PhaseExecutor {
       status: 'succeeded',
       metadata: { prNumber: pr.number, prUrl: pr.url, commitSha: sha ?? undefined },
     };
+  }
+
+  private async generateVerifyMd(
+    featureId: string,
+    featureDir: string,
+    bb: Blackboard,
+    sessionId: string,
+    worktreePath: string,
+  ): Promise<void> {
+    const prompt = buildVerifyPrompt(featureId, featureDir);
+    bb.appendEvent({
+      actorId: sessionId,
+      targetId: featureId,
+      summary: `Generating verify.md for ${featureId}`,
+      metadata: { phase: 'completing', featureId },
+    });
+
+    const launcher = getLauncher();
+    await launcher({
+      sessionId: `${sessionId}-verify`,
+      prompt,
+      workDir: worktreePath,
+      timeoutMs: VERIFY_TIMEOUT_MS,
+    });
+    // Continue regardless of exit code — specflow complete will validate
   }
 
   private findFeatureDir(specDir: string, featureId: string): string | null {
