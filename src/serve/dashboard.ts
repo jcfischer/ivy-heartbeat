@@ -35,6 +35,9 @@ export function generateDashboardHTML(): string {
 <h1>Ivy Heartbeat Dashboard</h1>
 <div id="summary"></div>
 
+<h2>SpecFlow Pipeline</h2>
+<div id="specflow-pipeline"><p style="color:#555;font-style:italic">Loading...</p></div>
+
 <h2>Search Events</h2>
 <div class="search-box">
   <input type="text" id="search-input" placeholder="Search events..." onkeyup="if(event.key==='Enter')doSearch()">
@@ -102,7 +105,19 @@ async function doSearch() {
     results.map(r => \`<tr><td>\${r.rank.toFixed(2)}</td><td>\${relTime(r.event.timestamp)}</td><td>\${r.event.summary.slice(0,80)}</td></tr>\`).join('') + '</table>';
 }
 
-function refresh() { loadSummary(); loadEvents(); loadHeartbeats(); }
+async function loadSpecFlow() {
+  try {
+    const res = await fetch('/api/specflow/panel');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const html = await res.text();
+    document.getElementById('specflow-pipeline').innerHTML = html;
+  } catch(e) {
+    document.getElementById('specflow-pipeline').innerHTML =
+      '<p style="color:#f44336">Unable to load pipeline data. Will retry.</p>';
+  }
+}
+
+function refresh() { loadSummary(); loadEvents(); loadHeartbeats(); loadSpecFlow(); }
 refresh();
 setInterval(refresh, 30000);
 </script>

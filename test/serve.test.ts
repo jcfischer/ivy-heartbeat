@@ -118,4 +118,69 @@ describe('dashboard HTML', () => {
     expect(html).toContain('/api/search');
     expect(html).toContain('search-input');
   });
+
+  test('dashboard HTML includes specflow-pipeline div', () => {
+    const html = generateDashboardHTML();
+    expect(html).toContain('id="specflow-pipeline"');
+  });
+
+  test('dashboard HTML includes loadSpecFlow function and panel URL', () => {
+    const html = generateDashboardHTML();
+    expect(html).toContain('loadSpecFlow');
+    expect(html).toContain('/api/specflow/panel');
+  });
+
+  test('dashboard HTML calls loadSpecFlow in refresh()', () => {
+    const html = generateDashboardHTML();
+    const refreshMatch = html.match(/function refresh\(\)[^\n]+/);
+    expect(refreshMatch?.[0]).toContain('loadSpecFlow');
+  });
+
+  test('dashboard HTML auto-refreshes every 30 seconds', () => {
+    const html = generateDashboardHTML();
+    expect(html).toContain('setInterval(refresh, 30000)');
+  });
+});
+
+describe('SpecFlow panel routes', () => {
+  let bb: Blackboard;
+  let tmpDir: string;
+  let server: ReturnType<typeof startServer>;
+  let baseUrl: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'hb-specflow-'));
+    bb = new Blackboard(join(tmpDir, 'test.db'));
+    const port = 10000 + Math.floor(Math.random() * 50000);
+    server = startServer(bb, { port });
+    baseUrl = `http://localhost:${server.port}`;
+  });
+
+  afterEach(() => {
+    server.stop();
+    bb.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test('GET /api/specflow/panel returns 200 with text/html', async () => {
+    const res = await fetch(`${baseUrl}/api/specflow/panel`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/html');
+  });
+
+  test('GET /api/specflow/panel returns empty placeholder when no features', async () => {
+    const html = await fetch(`${baseUrl}/api/specflow/panel`).then(r => r.text());
+    expect(html).toContain('No active SpecFlow features');
+  });
+
+  test('GET /api/specflow/panel returns feature row when feature exists', async () => {
+    bb.createFeature({ feature_id: 'f-001', project_id: 'ivy', title: 'Test Feature' });
+    const html = await fetch(`${baseUrl}/api/specflow/panel`).then(r => r.text());
+    expect(html).toContain('f-001');
+  });
+
+  test('GET /api/specflow/pipelines returns 404 (dead route removed)', async () => {
+    const res = await fetch(`${baseUrl}/api/specflow/pipelines`);
+    expect(res.status).toBe(404);
+  });
 });
