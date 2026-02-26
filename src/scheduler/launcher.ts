@@ -241,10 +241,14 @@ async function defaultLauncher(opts: LaunchOptions): Promise<LaunchResult> {
     env,
   });
 
-  // Set up timeout
+  // Set up timeout: SIGTERM first, then SIGKILL after 10s grace period
   const timeoutId = setTimeout(() => {
     appendFileSync(logPath, `\n=== TIMEOUT (${opts.timeoutMs / 1000}s) — sending SIGTERM ===\n`);
     proc.kill('SIGTERM');
+    setTimeout(() => {
+      appendFileSync(logPath, `\n=== SIGTERM grace expired — sending SIGKILL ===\n`);
+      try { proc.kill('SIGKILL'); } catch {}
+    }, 10_000);
   }, opts.timeoutMs);
 
   // Stream stdout (JSON) and stderr to log file in parallel

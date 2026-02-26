@@ -92,11 +92,8 @@ export class ImplementExecutor implements PhaseExecutor {
       timeoutMs,
     });
 
-    if (launchResult.exitCode !== 0) {
-      return { status: 'failed', error: `Implement agent exited ${launchResult.exitCode}: ${launchResult.stderr}` };
-    }
-
-    // Commit any uncommitted changes from the agent
+    // Always commit whatever the agent wrote, regardless of exit code.
+    // This ensures timed-out or killed agents don't lose their partial work.
     const sha = await commitAll(worktreePath, `feat(specflow): ${featureId} implementation`);
     if (sha) {
       bb.appendEvent({
@@ -105,6 +102,10 @@ export class ImplementExecutor implements PhaseExecutor {
         summary: `Committed implementation changes for ${featureId}`,
         metadata: { featureId, commitSha: sha },
       });
+    }
+
+    if (launchResult.exitCode !== 0) {
+      return { status: 'failed', error: `Implement agent exited ${launchResult.exitCode}: ${launchResult.stderr}` };
     }
 
     return { status: 'succeeded', sourceChanges: true };

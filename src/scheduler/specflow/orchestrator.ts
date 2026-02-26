@@ -28,7 +28,19 @@ const EXECUTORS: PhaseExecutor[] = [
   new CompleteExecutor(),
 ];
 
-const DEFAULT_PHASE_TIMEOUT_MIN = 90;
+const DEFAULT_PHASE_TIMEOUT_MIN = 20;
+
+/**
+ * Per-phase stale timeout overrides (minutes).
+ * Implementing can run 30-153+ min depending on task count; other phases are fast.
+ */
+const PHASE_TIMEOUT_MAP: Record<string, number> = {
+  specifying: 20,
+  planning: 20,
+  tasking: 20,
+  implementing: 180,
+  completing: 20,
+};
 
 function isStale(phaseStartedAt: string | null, timeoutMin: number): boolean {
   if (!phaseStartedAt) return true;
@@ -64,7 +76,8 @@ export function determineAction(
 
   // Active session — check if stale
   if (feature.current_session && feature.status === 'active') {
-    if (isStale(feature.phase_started_at, timeoutMin)) {
+    const effectiveTimeout = PHASE_TIMEOUT_MAP[feature.phase] ?? timeoutMin;
+    if (isStale(feature.phase_started_at, effectiveTimeout)) {
       return { type: 'release', reason: 'phase timeout exceeded' };
     }
     return { type: 'wait', reason: 'session active' };
