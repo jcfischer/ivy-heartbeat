@@ -1,5 +1,10 @@
 # Decisions Log
 
+## 2026-02-26 - F-027 Phase 3: queued phase handled via advance
+- Decision: `queued` ends with 'ed', so `determineAction()` routes it through `advance` (queued → specifying), not `run-phase`
+- Rationale: Consistent with the state machine — `queued` is a seed state like `specified`. The `SpecifyExecutor.canRun()` only handles `specifying` (and `specifying` retry), not `queued`.
+- Commit: 5bf6726
+
 ## 2026-02-24 - Claude OAuth for subprocess auth
 - Decision: Use `CLAUDE_CODE_OAUTH_TOKEN` env var (from `claude setup-token`) instead of keychain scraping or `ANTHROPIC_API_KEY`
 - Rationale: `claude --print` subprocesses need auth. API credits are depleted. The keychain OAuth token (`sk-ant-oat01-...`) doesn't work as `ANTHROPIC_API_KEY` (different format). `claude setup-token` creates a long-lived token specifically for headless use, passed via `CLAUDE_CODE_OAUTH_TOKEN`.
@@ -58,3 +63,26 @@
 - Decision: Created `.claude/memory/` directory with decisions.md and session-log.md
 - Rationale: Required by project CLAUDE.md protocol
 - Alternatives rejected: None — first session with this protocol
+
+## 2026-02-26 - F-027 Phase 1: specflow_features table in ivy-blackboard
+- Decision: Add table to both `CREATE_TABLES_SQL` (fresh DBs) AND as `MIGRATE_V6_SQL` (existing DBs at v5)
+- Rationale: Fresh DB creation skips migrations entirely — table must exist in initial schema. Migration handles the upgrade path for existing deployments.
+- Files changed: `src/schema.ts` (CREATE_TABLES_SQL, CREATE_INDEXES_SQL, MIGRATE_V6_SQL, CURRENT_SCHEMA_VERSION=6), `src/db.ts` (migration registry), `src/types.ts` (SpecFlowFeature interface + types), `src/specflow-features.ts` (new CRUD module), `tests/specflow-features.test.ts` (24 tests)
+- Commit: `422f872` in ivy-blackboard
+- Tests: 424/424 pass
+- Key pattern: `getActionableFeatures()` returns: (1) all active features (timeout checks), (2) pending features within slot budget, (3) over-limit features (need fail marking)
+
+## 2026-02-26 - F-027 SpecFlow State Machine Redesign
+- Decision: Centralized `specflow_features` table in ivy-blackboard + single orchestrator replaces work-item phase chaining
+- Rationale: Work items are wrong abstraction for multi-phase pipelines — decentralized state creates 7 failure modes (FM-1 through FM-7)
+- 5-phase migration: add DB table → dual-write → orchestrator → feature-flag switchover → cleanup
+- Spec committed at b499a4b: `.specify/specs/f-027-specflow-state-machine-redesign/`
+- Phase naming: `*ing` = active, `*ed` = completed — queryable with LIKE patterns
+- Feature flag: `SPECFLOW_ORCHESTRATOR=true/false` for safe rollback
+
+## 2026-02-26 - F-027 Phase 2: Dual-Write Bridge
+- Decision: All writes to `specflow_features` wrapped in try/catch — pipeline behavior unchanged
+- Key patterns: `ensureFeatureRow()` creates row if missing (covers pre-Phase-2 items); `evalScore` captured with `let` before quality gate block to avoid scoping issues; type casts needed for `phase` and `status` fields (`as SpecFlowFeature['phase']`)
+- Bun workspace gotcha: Adding new files to ivy-blackboard requires `bun install` in ivy-heartbeat to refresh per-file symlinks in node_modules
+- Commit: `c57aa63` — 5 files, 224 insertions
+- Next: Phase 3 (centralized orchestrator that dispatches based on specflow_features table)

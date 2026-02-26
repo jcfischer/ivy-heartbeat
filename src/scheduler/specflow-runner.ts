@@ -1401,6 +1401,13 @@ async function chainNextPhase(
   worktreePath: string,
   mainBranch: string
 ): Promise<void> {
+  // DEPRECATED: When orchestrator is active, phase advancement is driven by specflow_features table.
+  // Keep function body for rollback capability (Phase 5 will delete this).
+  if (process.env.SPECFLOW_ORCHESTRATOR === 'true') {
+    console.warn('[specflow-runner] DEPRECATED: chainNextPhase() called but SPECFLOW_ORCHESTRATOR=true — skipping work-item creation');
+    return;
+  }
+
   const newMeta: SpecFlowWorkItemMetadata = {
     specflow_feature_id: meta.specflow_feature_id,
     specflow_phase: next,
@@ -1436,6 +1443,13 @@ async function chainRetry(
   worktreePath: string,
   mainBranch: string
 ): Promise<void> {
+  // DEPRECATED: When orchestrator is active, retries are driven by specflow_features failure_count.
+  // Keep function body for rollback capability (Phase 5 will delete this).
+  if (process.env.SPECFLOW_ORCHESTRATOR === 'true') {
+    console.warn('[specflow-runner] DEPRECATED: chainRetry() called but SPECFLOW_ORCHESTRATOR=true — skipping retry work-item creation');
+    return;
+  }
+
   const retryCount = (meta.retry_count ?? 0) + 1;
 
   const newMeta: SpecFlowWorkItemMetadata = {
