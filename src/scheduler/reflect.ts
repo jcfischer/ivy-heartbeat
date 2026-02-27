@@ -5,6 +5,9 @@
  * specify→implement→review→merge cycle.
  */
 
+import { existsSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import type { Database } from "bun:sqlite";
 import type { ReflectMetadata, ReflectResult, LessonRecord, ReflectContext } from "../reflect/types";
 import { LessonRecordSchema } from "../reflect/lesson-schema";
@@ -65,14 +68,8 @@ export function parseReflectMeta(metadata: unknown): ReflectMetadata {
  * @param context Gathered reflect inputs
  * @returns Formatted prompt for agent
  */
-const REFLECT_PREAMBLE = `EXECUTION MODE: JSON Output Only
-
-You are a lesson extraction agent. Do NOT use PAI Algorithm format, ISC creation, phase headers (━━━), voice notification curls, or any other formatting. Your ENTIRE output must be a single valid JSON array — nothing else.
-
-`;
-
-function buildReflectPrompt(context: ReflectContext): string {
-  return `${REFLECT_PREAMBLE}# Reflect Phase — Extract Implementation Lessons
+function buildReflectPrompt(context: ReflectContext, outputPath: string): string {
+  return `# Reflect Phase — Extract Implementation Lessons
 
 ## Context
 
@@ -101,7 +98,7 @@ ${context.diffSummary || "(No diff summary available)"}
 
 ## Task
 
-Analyze the gap between:
+Use the PAI Algorithm to analyze the gap between:
 1. What the spec described
 2. What was implemented
 3. What review caught
@@ -109,9 +106,11 @@ Analyze the gap between:
 
 Extract lessons that would prevent similar issues in future implementations.
 
-## Output Format
+## Output
 
-Return a JSON array of lesson objects. Each lesson must follow this schema:
+Write a JSON array of lesson objects to: \`${outputPath}\`
+
+Use the Write tool to write the file. Each lesson must follow this schema:
 
 \`\`\`json
 [
@@ -135,7 +134,7 @@ Return a JSON array of lesson objects. Each lesson must follow this schema:
 - **Uniqueness:** Avoid near-duplicates of existing lessons
 - **Minimum yield:** Extract at least 1 lesson per analysis
 
-Output only the JSON array. No commentary.`;
+Write the JSON array to the file at \`${outputPath}\` using the Write tool. This is the primary deliverable.`;
 }
 
 /**
@@ -163,62 +162,50 @@ export async function runReflect(
   const context = gatherReflectInputs(db, metadata);
   console.log(`[reflect] Gathered inputs from blackboard`);
 
-  // Step 2: Build prompt and launch agent
-  const prompt = buildReflectPrompt(context);
+  // Step 2: Build prompt, launch agent with full PAI Algorithm
+  // Agent writes lessons to a temp JSON file via the Write tool
+  const outputPath = join(tmpdir(), `reflect-lessons-${Date.now()}.json`);
+  const prompt = buildReflectPrompt(context, outputPath);
 
-  console.log(`[reflect] Launching reflect agent via launcher`);
+  console.log(`[reflect] Launching reflect agent (full PAI Algorithm), output: ${outputPath}`);
 
-  const REFLECT_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes — JSON extraction only
+  const REFLECT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes — full algorithm run
   const sessionId = `reflect-${metadata.implementation_work_item_id}-${Date.now()}`;
   const workDir = process.env.HOME ?? '/tmp';
 
   const launcher = getLauncher();
-  let launchResult: Awaited<ReturnType<typeof launcher>>;
   try {
-    launchResult = await launcher({
+    await launcher({
       sessionId,
       prompt,
       workDir,
       timeoutMs: REFLECT_TIMEOUT_MS,
-      disableMcp: true,
     });
   } catch (error) {
     console.error(`[reflect] Agent execution failed:`, error);
     throw new Error(`Reflect agent failed: ${error}`);
   }
 
-  // Extract the final result text from stream-json output.
-  // The launcher streams JSON lines; the last "result" message carries the agent's output.
-  let agentOutput = '';
-  const lines = launchResult.stdout.split('\n');
-  for (const line of lines) {
-    if (!line.trim()) continue;
-    try {
-      const msg = JSON.parse(line);
-      if (msg.type === 'result' && msg.result) {
-        agentOutput = msg.result.trim();
-      }
-    } catch { /* raw line — ignore */ }
-  }
-  // Fallback: if no result message found, use full stdout (legacy --print mode)
-  if (!agentOutput) {
-    agentOutput = launchResult.stdout.trim();
-  }
+  // Step 3: Read and parse the lessons file written by the agent
+  console.log(`[reflect] Reading lessons from ${outputPath}`);
 
-  // Step 3: Parse and validate JSON output
-  console.log(`[reflect] Parsing agent output`);
+  if (!existsSync(outputPath)) {
+    throw new Error(`Reflect agent did not write lessons file at ${outputPath}`);
+  }
 
   let rawLessons: unknown[];
   try {
-    rawLessons = JSON.parse(agentOutput);
+    const content = await Bun.file(outputPath).text();
+    // Clean up temp file
+    try { unlinkSync(outputPath); } catch { /* best effort */ }
 
+    rawLessons = JSON.parse(content);
     if (!Array.isArray(rawLessons)) {
-      throw new Error("Agent output is not an array");
+      throw new Error("Lessons file is not a JSON array");
     }
   } catch (error) {
-    console.error(`[reflect] Failed to parse agent output as JSON:`, error);
-    console.error(`[reflect] Raw output:`, agentOutput.substring(0, 500));
-    throw new Error(`Invalid agent output: ${error}`);
+    console.error(`[reflect] Failed to parse lessons file:`, error);
+    throw new Error(`Invalid lessons file: ${error}`);
   }
 
   // Step 4 & 5: Validate, deduplicate, and persist lessons
