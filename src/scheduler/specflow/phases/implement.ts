@@ -1,10 +1,12 @@
 import { join } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
+import type { Database } from 'bun:sqlite';
 import type { Blackboard } from '../../../blackboard.ts';
 import type { PhaseExecutor, PhaseExecutorOptions, PhaseResult, SpecFlowFeature } from '../types.ts';
 import { getLauncher } from '../../launcher.ts';
 import { commitAll } from '../infra/worktree.ts';
 import { findFeatureDir } from '../utils/find-feature-dir.ts';
+import { queryLessons } from '../../../reflect/analyzer.ts';
 
 const IMPLEMENT_TIMEOUT_MIN_MS = 30 * 60 * 1000;
 const IMPLEMENT_TIMEOUT_PER_TASK_MS = 3 * 60 * 1000;
@@ -16,8 +18,33 @@ Your ONLY job: implement the feature as specified in the tasks.md file. Write co
 
 `;
 
-function buildImplementPrompt(featureId: string, specDir: string): string {
+function buildLessonsSection(db: Database, project: string): string {
+  const lessons = queryLessons(db, { project, limit: 20 });
+  if (lessons.length === 0) return '';
+
+  const byCategory = new Map<string, string[]>();
+  for (const lesson of lessons) {
+    const constraints = byCategory.get(lesson.category) ?? [];
+    constraints.push(`  - [${lesson.severity}] ${lesson.constraint}`);
+    byCategory.set(lesson.category, constraints);
+  }
+
+  const lines = ['## Known Constraints from Prior Implementations', ''];
+  for (const [category, constraints] of byCategory) {
+    lines.push(`### ${category}`);
+    lines.push(...constraints);
+    lines.push('');
+  }
+  lines.push('Apply these constraints as you implement. They reflect real issues from past cycles.\n');
+  return lines.join('\n');
+}
+
+function buildImplementPrompt(featureId: string, specDir: string, db: Database, project: string): string {
   const parts: string[] = [CODING_PREAMBLE];
+
+  const lessonsSection = buildLessonsSection(db, project);
+  if (lessonsSection) parts.push(lessonsSection);
+
   parts.push(`Implement SpecFlow feature: ${featureId}\n`);
 
   for (const file of ['spec.md', 'plan.md', 'tasks.md']) {
@@ -62,7 +89,8 @@ export class ImplementExecutor implements PhaseExecutor {
     const taskCount = countTasks(featureDir);
     const timeoutMs = Math.max(IMPLEMENT_TIMEOUT_MIN_MS, taskCount * IMPLEMENT_TIMEOUT_PER_TASK_MS);
 
-    const prompt = buildImplementPrompt(featureId, featureDir);
+    const project = feature.project_id ?? feature.github_repo ?? '';
+    const prompt = buildImplementPrompt(featureId, featureDir, opts.db, project);
 
     bb.appendEvent({
       actorId: sessionId,

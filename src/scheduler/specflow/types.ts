@@ -1,3 +1,4 @@
+import type { Database } from 'bun:sqlite';
 import type { Blackboard } from '../../blackboard.ts';
 import type { SpecFlowFeature } from 'ivy-blackboard/src/types';
 
@@ -8,6 +9,7 @@ export interface PhaseExecutorOptions {
   projectPath: string;
   timeoutMs: number;
   sessionId: string;
+  db: Database;
 }
 
 export interface PhaseResult {

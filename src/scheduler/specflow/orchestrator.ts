@@ -407,6 +407,7 @@ async function runPhase(
     projectPath: project.local_path,
     timeoutMs: config.phaseTimeoutMin * 60_000,
     sessionId,
+    db: bb.db,
   });
 
   if (result.status === 'succeeded') {
