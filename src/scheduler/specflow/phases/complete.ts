@@ -5,7 +5,6 @@ import type { PhaseExecutor, PhaseExecutorOptions, PhaseResult, SpecFlowFeature 
 import { runSpecflowCli } from '../infra/specflow-cli.ts';
 import { getLauncher } from '../../launcher.ts';
 import { extractOwnerRepo } from '../../../evaluators/github-issues.ts';
-import { findFeatureDir } from '../infra/spec-utils.ts';
 import {
   commitFiles,
   pushBranch,
@@ -78,7 +77,7 @@ export class CompleteExecutor implements PhaseExecutor {
 
     // Generate verify.md if missing — specflow complete requires it
     const specRoot = join(worktreePath, '.specify', 'specs');
-    const featureDir = findFeatureDir(specRoot, featureId);
+    const featureDir = this.findFeatureDir(specRoot, featureId);
     const verifyPath = featureDir ? join(featureDir, 'verify.md') : null;
     if (verifyPath && !existsSync(verifyPath)) {
       await this.generateVerifyMd(featureId, featureDir!, bb, sessionId, worktreePath);
@@ -181,6 +180,20 @@ export class CompleteExecutor implements PhaseExecutor {
       timeoutMs: VERIFY_TIMEOUT_MS,
     });
     // Continue regardless of exit code — specflow complete will validate
+  }
+
+  private findFeatureDir(specDir: string, featureId: string): string | null {
+    try {
+      const { readdirSync } = require('node:fs');
+      const entries = readdirSync(specDir, { withFileTypes: true });
+      const prefix = featureId.toLowerCase();
+      for (const e of entries) {
+        if (e.isDirectory && e.name.toLowerCase().startsWith(prefix)) {
+          return join(specDir, e.name);
+        }
+      }
+    } catch {}
+    return null;
   }
 
   private async buildPrBody(featureId: string, featureDir: string | null, mainBranch: string, branch: string): Promise<string> {

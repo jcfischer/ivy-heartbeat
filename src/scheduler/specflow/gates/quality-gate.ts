@@ -1,6 +1,6 @@
 import { join } from 'node:path';
+import { readdirSync, statSync } from 'node:fs';
 import { runSpecflowCli, parseEvalScore } from '../infra/specflow-cli.ts';
-import { findFeatureDir } from '../infra/spec-utils.ts';
 
 export const PHASE_EVAL_THRESHOLDS: Record<string, number> = {
   specifying: 80,
@@ -26,6 +26,24 @@ export interface QualityGateResult {
 /**
  * Find the feature directory in .specify/specs/ by feature ID prefix.
  */
+function findFeatureDir(specDir: string, featureId: string): string | null {
+  try {
+    const entries = readdirSync(specDir, { withFileTypes: true });
+    const prefix = featureId.toLowerCase();
+    for (const entry of entries) {
+      if (!entry.name.toLowerCase().startsWith(prefix)) continue;
+      // Use statSync (follows symlinks) so symlinked spec dirs are found too
+      try {
+        const stat = statSync(join(specDir, entry.name));
+        if (stat.isDirectory()) return join(specDir, entry.name);
+      } catch { /* broken symlink or permission error — skip */ }
+    }
+  } catch {
+    // specDir doesn't exist
+  }
+  return null;
+}
+
 /**
  * Run the quality gate for a given phase.
  * Runs `specflow eval` on the phase artifact and checks the score.
