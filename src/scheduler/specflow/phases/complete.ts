@@ -19,6 +19,7 @@ import {
   getFilesChangedSummary,
   formatFilesChanged,
 } from '../../../lib/pr-body-extractor.ts';
+import { findFeatureDir } from '../utils/find-feature-dir.ts';
 
 const SPECFLOW_TIMEOUT_MS = 30 * 60 * 1000;
 const VERIFY_TIMEOUT_MS = 10 * 60 * 1000;
@@ -77,7 +78,7 @@ export class CompleteExecutor implements PhaseExecutor {
 
     // Generate verify.md if missing — specflow complete requires it
     const specRoot = join(worktreePath, '.specify', 'specs');
-    const featureDir = this.findFeatureDir(specRoot, featureId);
+    const featureDir = findFeatureDir(specRoot, featureId);
     const verifyPath = featureDir ? join(featureDir, 'verify.md') : null;
     if (verifyPath && !existsSync(verifyPath)) {
       await this.generateVerifyMd(featureId, featureDir!, bb, sessionId, worktreePath);
@@ -180,20 +181,6 @@ export class CompleteExecutor implements PhaseExecutor {
       timeoutMs: VERIFY_TIMEOUT_MS,
     });
     // Continue regardless of exit code — specflow complete will validate
-  }
-
-  private findFeatureDir(specDir: string, featureId: string): string | null {
-    try {
-      const { readdirSync } = require('node:fs');
-      const entries = readdirSync(specDir, { withFileTypes: true });
-      const prefix = featureId.toLowerCase();
-      for (const e of entries) {
-        if (e.isDirectory && e.name.toLowerCase().startsWith(prefix)) {
-          return join(specDir, e.name);
-        }
-      }
-    } catch {}
-    return null;
   }
 
   private async buildPrBody(featureId: string, featureDir: string | null, mainBranch: string, branch: string): Promise<string> {
