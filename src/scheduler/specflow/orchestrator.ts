@@ -1,5 +1,6 @@
 import { join, dirname } from 'node:path';
-import { existsSync, mkdirSync, symlinkSync, lstatSync } from 'node:fs';
+import { existsSync, mkdirSync, symlinkSync, lstatSync, readdirSync } from 'node:fs';
+import { Database as SpecflowDb } from 'bun:sqlite';
 import type { Blackboard } from '../../blackboard.ts';
 import type { SpecFlowFeature } from 'ivy-blackboard/src/types';
 import {
@@ -215,7 +216,6 @@ function ensureSpecflowInWorktree(worktreePath: string, projectPath: string): vo
  */
 function ensureSpecDirInWorktree(worktreePath: string, projectPath: string, featureId: string): void {
   try {
-    const { readdirSync } = require('node:fs');
     const srcSpecsDir = join(projectPath, '.specify', 'specs');
 
     // Find the source spec dir: try prefix match first, then specflow DB fallback
@@ -224,7 +224,7 @@ function ensureSpecDirInWorktree(worktreePath: string, projectPath: string, feat
     const entries = readdirSync(srcSpecsDir, { withFileTypes: true });
     const prefix = featureId.toLowerCase();
     const srcEntry = entries.find(
-      (e: { isDirectory: () => boolean; name: string }) => e.isDirectory() && e.name.toLowerCase().startsWith(prefix)
+      (e) => e.isDirectory() && e.name.toLowerCase().startsWith(prefix)
     );
     if (srcEntry) {
       srcDirName = srcEntry.name;
@@ -233,8 +233,7 @@ function ensureSpecDirInWorktree(worktreePath: string, projectPath: string, feat
       const specflowDbPath = join(worktreePath, '.specflow', 'features.db');
       if (existsSync(specflowDbPath)) {
         try {
-          const { Database: SpecflowLocalDb2 } = require('bun:sqlite');
-          const specflowDb = new SpecflowLocalDb2(specflowDbPath, { readonly: true });
+          const specflowDb = new SpecflowDb(specflowDbPath, { readonly: true });
           const row = specflowDb.query('SELECT spec_path FROM features WHERE id = ?').get(featureId) as { spec_path: string } | null;
           specflowDb.close();
           if (row?.spec_path) {
@@ -320,7 +319,22 @@ async function checkGateAndAdvance(
     }
   } else if (gate === 'artifact') {
     const specDir = join(worktreePath, '.specify', 'specs');
-    const featureDir = findFeatureDir(specDir, feature.feature_id);
+    let featureDir = findFeatureDir(specDir, feature.feature_id);
+    if (!featureDir) {
+      // Fallback: check specflow local DB for spec_path (handles ID-remapped features)
+      const sfDbPath = join(worktreePath, '.specflow', 'features.db');
+      if (existsSync(sfDbPath)) {
+        try {
+          const sfDb = new SpecflowDb(sfDbPath, { readonly: true });
+          const row = sfDb.query('SELECT spec_path FROM features WHERE id = ?').get(feature.feature_id) as { spec_path: string } | null;
+          sfDb.close();
+          if (row?.spec_path) {
+            const candidate = join(worktreePath, row.spec_path);
+            if (existsSync(candidate)) featureDir = candidate;
+          }
+        } catch {}
+      }
+    }
     const tasksPath = featureDir ? join(featureDir, 'tasks.md') : null;
     passed = !!(tasksPath && existsSync(tasksPath));
     gateDetails = passed ? 'tasks.md present' : 'tasks.md missing';
