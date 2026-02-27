@@ -18,7 +18,7 @@ import {
   setReviewCycleAccessor,
   resetReviewCycleAccessor,
 } from './worktree.ts';
-import { parseSpecFlowMeta, type SpecFlowPhase } from './specflow-types.ts';
+import { parseSpecFlowMeta, type SpecFlowPhase, type SpecFlowWorkItemMetadata } from './specflow-types.ts';
 
 /** Map specflow work item phase verb → active (*ing) feature phase */
 const PHASE_ING: Partial<Record<SpecFlowPhase, string>> = {
@@ -497,13 +497,40 @@ export async function dispatch(
               durationMs,
             });
           } else if (sfResult.status === 'retry') {
-            // Retry items are already created by the runner — just release this one
+            // Complete the original work item, then create a new retry work item
             bb.completeWorkItem(item.item_id, sessionId);
+
+            const retryCount = (sfMeta.retry_count ?? 0) + 1;
+            const retryItemId = `specflow-${sfMeta.specflow_project_id}-${sfMeta.specflow_feature_id}-${sfMeta.specflow_phase}-retry-${retryCount}`;
+            const retryMeta: SpecFlowWorkItemMetadata = {
+              ...sfMeta,
+              retry_count: retryCount,
+            };
+            try {
+              bb.createWorkItem({
+                id: retryItemId,
+                title: item.title,
+                description: item.description ?? undefined,
+                project: sfMeta.specflow_project_id,
+                source: 'specflow',
+                sourceRef: item.source_ref ?? undefined,
+                priority: item.priority ?? undefined,
+                metadata: JSON.stringify(retryMeta),
+              });
+            } catch (err) {
+              bb.appendEvent({
+                actorId: sessionId,
+                targetId: item.item_id,
+                summary: `Failed to create retry work item ${retryItemId}: ${err instanceof Error ? err.message : String(err)}`,
+                metadata: { phase: sfMeta.specflow_phase, retryCount },
+              });
+            }
+
             bb.appendEvent({
               actorId: sessionId,
               targetId: item.item_id,
-              summary: `SpecFlow phase "${sfMeta.specflow_phase}" needs retry for ${sfMeta.specflow_feature_id} (${Math.round(durationMs / 1000)}s)`,
-              metadata: { phase: sfMeta.specflow_phase, durationMs, retryItemId: sfResult.retryItemId },
+              summary: `SpecFlow phase "${sfMeta.specflow_phase}" needs retry for ${sfMeta.specflow_feature_id} (${Math.round(durationMs / 1000)}s) — created ${retryItemId}`,
+              metadata: { phase: sfMeta.specflow_phase, durationMs, retryItemId, retryCount },
             });
 
             result.dispatched.push({

@@ -42,6 +42,33 @@ import {
 } from './worktree.ts';
 import { findFeatureDir } from './specflow/utils/find-feature-dir.ts';
 
+/**
+ * Resolve a feature's spec directory, with DB fallback for ID-remapped features.
+ * Handles cases where the feature was registered with a different ID than its
+ * spec directory name (e.g. F-107 registered but spec dir is "F-103-sync-watch-mode").
+ */
+function resolveSpecFeatureDir(worktreePath: string, specDir: string, featureId: string): string | null {
+  let featureDir = findFeatureDir(specDir, featureId);
+  if (!featureDir) {
+    // Fallback: query local specflow DB for spec_path.
+    const specflowDbPath = join(worktreePath, '.specflow', 'features.db');
+    if (existsSync(specflowDbPath)) {
+      try {
+        const specflowDb = new SpecflowLocalDb(specflowDbPath, { readonly: true });
+        const row = specflowDb.query('SELECT spec_path FROM features WHERE id = ?').get(featureId) as { spec_path: string } | null;
+        specflowDb.close();
+        if (row?.spec_path) {
+          const resolved = join(worktreePath, row.spec_path);
+          if (existsSync(resolved)) featureDir = resolved;
+        }
+      } catch {
+        // Non-fatal — fall through to featureId-based path
+      }
+    }
+  }
+  return featureDir;
+}
+
 const MAX_RETRIES = 1;
 const QUALITY_THRESHOLD = 80;
 const SPECFLOW_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
@@ -605,25 +632,7 @@ export async function runSpecFlowPhase(
   const expectedArtifact = PHASE_EXPECTED_ARTIFACTS[phase];
   if (expectedArtifact) {
     const specDir = join(worktreePath, '.specify', 'specs');
-    let featureDirForArtifact = findFeatureDir(specDir, featureId);
-    if (!featureDirForArtifact) {
-      // Fallback: query local specflow DB for spec_path.
-      // Handles ID remapping (e.g. feature registered as F-107 but spec dir is "F-103-sync-watch-mode").
-      const specflowDbPath = join(worktreePath, '.specflow', 'features.db');
-      if (existsSync(specflowDbPath)) {
-        try {
-          const specflowDb = new SpecflowLocalDb(specflowDbPath, { readonly: true });
-          const row = specflowDb.query('SELECT spec_path FROM features WHERE id = ?').get(featureId) as { spec_path: string } | null;
-          specflowDb.close();
-          if (row?.spec_path) {
-            const resolved = join(worktreePath, row.spec_path);
-            if (existsSync(resolved)) featureDirForArtifact = resolved;
-          }
-        } catch {
-          // Non-fatal — fall through to featureId-based path
-        }
-      }
-    }
+    const featureDirForArtifact = resolveSpecFeatureDir(worktreePath, specDir, featureId);
     const artifactFile = featureDirForArtifact
       ? join(featureDirForArtifact, expectedArtifact)
       : join(specDir, featureId, expectedArtifact);
@@ -1030,7 +1039,7 @@ async function checkQualityGate(
 
   // Find the artifact file: .specify/specs/{feature-dir}/{artifact}
   const specDir = join(worktreePath, '.specify', 'specs');
-  const featureDir = findFeatureDir(specDir, featureId);
+  const featureDir = resolveSpecFeatureDir(worktreePath, specDir, featureId);
   const artifactPath = featureDir
     ? join(featureDir, artifact)
     : join(specDir, featureId, artifact);
