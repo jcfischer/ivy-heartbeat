@@ -6,7 +6,8 @@
  */
 
 import { join, dirname } from 'node:path';
-import { existsSync, mkdirSync, symlinkSync, lstatSync, cpSync, readFileSync, appendFileSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, symlinkSync, lstatSync, cpSync, readFileSync, appendFileSync, unlinkSync, readdirSync } from 'node:fs';
+import { Database as SpecflowLocalDb } from 'bun:sqlite';
 import type { Blackboard } from '../blackboard.ts';
 import type { BlackboardWorkItem } from 'ivy-blackboard/src/types';
 import { getLauncher, logPathForSession } from './launcher.ts';
@@ -604,7 +605,25 @@ export async function runSpecFlowPhase(
   const expectedArtifact = PHASE_EXPECTED_ARTIFACTS[phase];
   if (expectedArtifact) {
     const specDir = join(worktreePath, '.specify', 'specs');
-    const featureDirForArtifact = findFeatureDir(specDir, featureId);
+    let featureDirForArtifact = findFeatureDir(specDir, featureId);
+    if (!featureDirForArtifact) {
+      // Fallback: query local specflow DB for spec_path.
+      // Handles ID remapping (e.g. feature registered as F-107 but spec dir is "F-103-sync-watch-mode").
+      const specflowDbPath = join(worktreePath, '.specflow', 'features.db');
+      if (existsSync(specflowDbPath)) {
+        try {
+          const specflowDb = new SpecflowLocalDb(specflowDbPath, { readonly: true });
+          const row = specflowDb.query('SELECT spec_path FROM features WHERE id = ?').get(featureId) as { spec_path: string } | null;
+          specflowDb.close();
+          if (row?.spec_path) {
+            const resolved = join(worktreePath, row.spec_path);
+            if (existsSync(resolved)) featureDirForArtifact = resolved;
+          }
+        } catch {
+          // Non-fatal — fall through to featureId-based path
+        }
+      }
+    }
     const artifactFile = featureDirForArtifact
       ? join(featureDirForArtifact, expectedArtifact)
       : join(specDir, featureId, expectedArtifact);
