@@ -6,7 +6,6 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { $ } from "bun";
 import type { ReflectMetadata, ReflectResult, LessonRecord, ReflectContext } from "../reflect/types";
 import { LessonRecordSchema } from "../reflect/lesson-schema";
 import {
@@ -15,6 +14,7 @@ import {
   isLessonDuplicate,
   logDuplicateLesson,
 } from "../reflect/analyzer";
+import { getLauncher } from "./launcher.ts";
 
 /**
  * Parse and validate reflect metadata from work item
@@ -65,8 +65,14 @@ export function parseReflectMeta(metadata: unknown): ReflectMetadata {
  * @param context Gathered reflect inputs
  * @returns Formatted prompt for agent
  */
+const REFLECT_PREAMBLE = `EXECUTION MODE: JSON Output Only
+
+You are a lesson extraction agent. Do NOT use PAI Algorithm format, ISC creation, phase headers (━━━), voice notification curls, or any other formatting. Your ENTIRE output must be a single valid JSON array — nothing else.
+
+`;
+
 function buildReflectPrompt(context: ReflectContext): string {
-  return `# Reflect Phase — Extract Implementation Lessons
+  return `${REFLECT_PREAMBLE}# Reflect Phase — Extract Implementation Lessons
 
 ## Context
 
@@ -160,16 +166,43 @@ export async function runReflect(
   // Step 2: Build prompt and launch agent
   const prompt = buildReflectPrompt(context);
 
-  console.log(`[reflect] Launching reflect agent via claude --print`);
+  console.log(`[reflect] Launching reflect agent via launcher`);
 
-  let agentOutput: string;
+  const REFLECT_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes — JSON extraction only
+  const sessionId = `reflect-${metadata.implementation_work_item_id}-${Date.now()}`;
+  const workDir = process.env.HOME ?? '/tmp';
+
+  const launcher = getLauncher();
+  let launchResult: Awaited<ReturnType<typeof launcher>>;
   try {
-    // Launch agent with 120-second timeout
-    const result = await $`echo ${prompt} | claude --print`.text();
-    agentOutput = result.trim();
+    launchResult = await launcher({
+      sessionId,
+      prompt,
+      workDir,
+      timeoutMs: REFLECT_TIMEOUT_MS,
+      disableMcp: true,
+    });
   } catch (error) {
     console.error(`[reflect] Agent execution failed:`, error);
     throw new Error(`Reflect agent failed: ${error}`);
+  }
+
+  // Extract the final result text from stream-json output.
+  // The launcher streams JSON lines; the last "result" message carries the agent's output.
+  let agentOutput = '';
+  const lines = launchResult.stdout.split('\n');
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    try {
+      const msg = JSON.parse(line);
+      if (msg.type === 'result' && msg.result) {
+        agentOutput = msg.result.trim();
+      }
+    } catch { /* raw line — ignore */ }
+  }
+  // Fallback: if no result message found, use full stdout (legacy --print mode)
+  if (!agentOutput) {
+    agentOutput = launchResult.stdout.trim();
   }
 
   // Step 3: Parse and validate JSON output
