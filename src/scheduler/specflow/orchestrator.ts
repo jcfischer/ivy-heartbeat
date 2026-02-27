@@ -209,23 +209,54 @@ function ensureSpecflowInWorktree(worktreePath: string, projectPath: string): vo
  * The specflow CLI writes spec artifacts (spec.md, plan.md, etc.) to the absolute
  * spec_path which lives in the source repo. Quality gates check the worktree path.
  * Symlinking ensures gates can find the artifacts without copying files.
+ *
+ * Handles ID-remapped features (e.g. F-107 registered in blackboard but spec dir
+ * is named F-103-sync-watch-mode): falls back to querying the specflow local DB.
  */
 function ensureSpecDirInWorktree(worktreePath: string, projectPath: string, featureId: string): void {
   try {
     const { readdirSync } = require('node:fs');
     const srcSpecsDir = join(projectPath, '.specify', 'specs');
+
+    // Find the source spec dir: try prefix match first, then specflow DB fallback
+    let srcDirName: string | null = null;
+
     const entries = readdirSync(srcSpecsDir, { withFileTypes: true });
     const prefix = featureId.toLowerCase();
     const srcEntry = entries.find(
       (e: { isDirectory: () => boolean; name: string }) => e.isDirectory() && e.name.toLowerCase().startsWith(prefix)
     );
-    if (!srcEntry) return; // no spec dir in source repo yet
+    if (srcEntry) {
+      srcDirName = srcEntry.name;
+    } else {
+      // Fallback: query the specflow local DB for spec_path (handles ID remapping)
+      const specflowDbPath = join(worktreePath, '.specflow', 'features.db');
+      if (existsSync(specflowDbPath)) {
+        try {
+          const { Database: SpecflowLocalDb2 } = require('bun:sqlite');
+          const specflowDb = new SpecflowLocalDb2(specflowDbPath, { readonly: true });
+          const row = specflowDb.query('SELECT spec_path FROM features WHERE id = ?').get(featureId) as { spec_path: string } | null;
+          specflowDb.close();
+          if (row?.spec_path) {
+            // spec_path is relative to project root (e.g. ".specify/specs/F-103-sync-watch-mode")
+            const dirName = row.spec_path.split('/').pop();
+            if (dirName && existsSync(join(srcSpecsDir, dirName))) {
+              srcDirName = dirName;
+            }
+          }
+        } catch {
+          // Non-fatal — fall through
+        }
+      }
+    }
 
-    const srcDir = join(srcSpecsDir, srcEntry.name);
+    if (!srcDirName) return; // no spec dir in source repo yet
+
+    const srcDir = join(srcSpecsDir, srcDirName);
     const destSpecsDir = join(worktreePath, '.specify', 'specs');
-    const destDir = join(destSpecsDir, srcEntry.name);
+    const destDir = join(destSpecsDir, srcDirName);
 
-    if (existsSync(destDir)) return; // already there
+    if (existsSync(destDir)) return; // already there (e.g. committed via git)
 
     mkdirSync(destSpecsDir, { recursive: true });
     symlinkSync(srcDir, destDir, 'dir');
