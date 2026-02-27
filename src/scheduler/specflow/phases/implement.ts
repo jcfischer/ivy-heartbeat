@@ -5,7 +5,7 @@ import type { Blackboard } from '../../../blackboard.ts';
 import type { PhaseExecutor, PhaseExecutorOptions, PhaseResult, SpecFlowFeature } from '../types.ts';
 import { getLauncher } from '../../launcher.ts';
 import { commitAll } from '../infra/worktree.ts';
-import { findFeatureDir } from '../utils/find-feature-dir.ts';
+import { resolveFeatureDirWithFallback } from '../utils/find-feature-dir.ts';
 import { queryLessons } from '../../../reflect/analyzer.ts';
 
 const IMPLEMENT_TIMEOUT_MIN_MS = 30 * 60 * 1000;
@@ -85,7 +85,7 @@ export class ImplementExecutor implements PhaseExecutor {
     const { worktreePath, sessionId } = opts;
 
     const specRoot = join(worktreePath, '.specify', 'specs');
-    const featureDir = findFeatureDir(specRoot, featureId) ?? join(specRoot, featureId);
+    const featureDir = resolveFeatureDirWithFallback(worktreePath, featureId) ?? join(specRoot, featureId);
     const taskCount = countTasks(featureDir);
     const timeoutMs = Math.max(IMPLEMENT_TIMEOUT_MIN_MS, taskCount * IMPLEMENT_TIMEOUT_PER_TASK_MS);
 

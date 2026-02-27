@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { runSpecflowCli, parseEvalScore } from '../infra/specflow-cli.ts';
-import { findFeatureDir } from '../utils/find-feature-dir.ts';
+import { resolveFeatureDirWithFallback } from '../utils/find-feature-dir.ts';
 
 export const PHASE_EVAL_THRESHOLDS: Record<string, number> = {
   specifying: 80,
@@ -41,7 +41,7 @@ export async function checkQualityGate(
   }
 
   const specDir = join(worktreePath, '.specify', 'specs');
-  const featureDir = findFeatureDir(specDir, featureId);
+  const featureDir = resolveFeatureDirWithFallback(worktreePath, featureId);
   const artifactPath = featureDir
     ? join(featureDir, artifact)
     : join(specDir, featureId, artifact);
