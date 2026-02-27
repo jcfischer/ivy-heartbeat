@@ -4,6 +4,7 @@ import type { Blackboard } from '../../../blackboard.ts';
 import type { PhaseExecutor, PhaseExecutorOptions, PhaseResult, SpecFlowFeature } from '../types.ts';
 import { getLauncher } from '../../launcher.ts';
 import { commitAll } from '../infra/worktree.ts';
+import { findFeatureDir } from '../infra/spec-utils.ts';
 
 const IMPLEMENT_TIMEOUT_MIN_MS = 30 * 60 * 1000;
 const IMPLEMENT_TIMEOUT_PER_TASK_MS = 3 * 60 * 1000;
@@ -41,20 +42,6 @@ function countTasks(specDir: string): number {
   } catch {
     return 0;
   }
-}
-
-function findFeatureDir(specDir: string, featureId: string): string | null {
-  try {
-    const { readdirSync } = require('node:fs');
-    const entries = readdirSync(specDir, { withFileTypes: true });
-    const prefix = featureId.toLowerCase();
-    for (const entry of entries) {
-      if (entry.isDirectory && entry.name.toLowerCase().startsWith(prefix)) {
-        return join(specDir, entry.name);
-      }
-    }
-  } catch {}
-  return null;
 }
 
 export class ImplementExecutor implements PhaseExecutor {
