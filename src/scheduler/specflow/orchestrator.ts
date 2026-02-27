@@ -20,7 +20,7 @@ import { ImplementExecutor } from './phases/implement.ts';
 import { CompleteExecutor } from './phases/complete.ts';
 import type { PhaseExecutor } from './types.ts';
 import { createWorktree, ensureWorktree } from './infra/worktree.ts';
-import { findFeatureDir } from './utils/find-feature-dir.ts';
+import { resolveFeatureDirWithFallback } from './utils/find-feature-dir.ts';
 
 const EXECUTORS: PhaseExecutor[] = [
   new SpecifyExecutor(),
@@ -318,23 +318,7 @@ async function checkGateAndAdvance(
       try { bb.updateFeature(feature.feature_id, scoreUpdate); } catch {}
     }
   } else if (gate === 'artifact') {
-    const specDir = join(worktreePath, '.specify', 'specs');
-    let featureDir = findFeatureDir(specDir, feature.feature_id);
-    if (!featureDir) {
-      // Fallback: check specflow local DB for spec_path (handles ID-remapped features)
-      const sfDbPath = join(worktreePath, '.specflow', 'features.db');
-      if (existsSync(sfDbPath)) {
-        try {
-          const sfDb = new SpecflowDb(sfDbPath, { readonly: true });
-          const row = sfDb.query('SELECT spec_path FROM features WHERE id = ?').get(feature.feature_id) as { spec_path: string } | null;
-          sfDb.close();
-          if (row?.spec_path) {
-            const candidate = join(worktreePath, row.spec_path);
-            if (existsSync(candidate)) featureDir = candidate;
-          }
-        } catch {}
-      }
-    }
+    const featureDir = resolveFeatureDirWithFallback(worktreePath, feature.feature_id);
     const tasksPath = featureDir ? join(featureDir, 'tasks.md') : null;
     passed = !!(tasksPath && existsSync(tasksPath));
     gateDetails = passed ? 'tasks.md present' : 'tasks.md missing';

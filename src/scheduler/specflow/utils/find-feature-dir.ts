@@ -1,5 +1,6 @@
 import { join } from 'node:path';
-import { readdirSync } from 'node:fs';
+import { readdirSync, existsSync } from 'node:fs';
+import { Database } from 'bun:sqlite';
 
 /**
  * Find the feature directory in .specify/specs/ by feature ID prefix.
@@ -23,5 +24,37 @@ export function findFeatureDir(specDir: string, featureId: string): string | nul
   } catch {
     // specDir doesn't exist or not accessible
   }
+  return null;
+}
+
+/**
+ * Resolve the feature directory with a DB fallback for ID-remapped features.
+ *
+ * Some features are registered in the blackboard with an ID (e.g. "F-107") that
+ * differs from their spec directory name (e.g. "F-103-sync-watch-mode"). The
+ * prefix-match in findFeatureDir fails for these.  This function falls back to
+ * querying the specflow local DB (.specflow/features.db) for the spec_path.
+ *
+ * @param worktreePath - Root path of the worktree
+ * @param featureId - Feature ID as registered in the blackboard
+ * @returns Full path to feature directory, or null if not found
+ */
+export function resolveFeatureDirWithFallback(worktreePath: string, featureId: string): string | null {
+  const specDir = join(worktreePath, '.specify', 'specs');
+  const found = findFeatureDir(specDir, featureId);
+  if (found) return found;
+
+  // Fallback: check specflow local DB for spec_path
+  const sfDbPath = join(worktreePath, '.specflow', 'features.db');
+  if (!existsSync(sfDbPath)) return null;
+  try {
+    const db = new Database(sfDbPath, { readonly: true });
+    const row = db.query('SELECT spec_path FROM features WHERE id = ?').get(featureId) as { spec_path: string } | null;
+    db.close();
+    if (row?.spec_path) {
+      const candidate = join(worktreePath, row.spec_path);
+      if (existsSync(candidate)) return candidate;
+    }
+  } catch {}
   return null;
 }
