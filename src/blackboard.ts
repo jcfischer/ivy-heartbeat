@@ -41,6 +41,7 @@ import {
   createFeature,
   getFeature,
   updateFeature,
+  upsertFeature,
   listFeatures,
   getActionableFeatures,
   type CreateFeatureInput,
@@ -189,6 +190,10 @@ export class Blackboard {
 
   updateFeature(featureId: string, updates: Partial<Omit<SpecFlowFeature, 'feature_id' | 'created_at'>>): SpecFlowFeature {
     return updateFeature(this.db, featureId, updates);
+  }
+
+  upsertFeature(input: CreateFeatureInput): SpecFlowFeature {
+    return upsertFeature(this.db, input);
   }
 
   listFeatures(opts?: ListFeaturesOptions): SpecFlowFeature[] {

@@ -18,7 +18,26 @@ import {
   setReviewCycleAccessor,
   resetReviewCycleAccessor,
 } from './worktree.ts';
-import { parseSpecFlowMeta } from './specflow-types.ts';
+import { parseSpecFlowMeta, type SpecFlowPhase } from './specflow-types.ts';
+
+/** Map specflow work item phase verb → active (*ing) feature phase */
+const PHASE_ING: Partial<Record<SpecFlowPhase, string>> = {
+  specify: 'specifying', plan: 'planning', tasks: 'tasking',
+  implement: 'implementing', complete: 'completing',
+};
+
+/** Map specflow work item phase verb → completed (*ed) feature phase */
+const PHASE_ED: Partial<Record<SpecFlowPhase, string>> = {
+  specify: 'specified', plan: 'planned', tasks: 'tasked',
+  implement: 'implemented', complete: 'completed',
+};
+
+/** Extract human-readable feature title from a specflow work item title.
+ * "SpecFlow plan: F-103 Sync Watch Mode (supertag-cli)" → "F-103 Sync Watch Mode (supertag-cli)"
+ */
+function extractFeatureTitle(itemTitle: string): string {
+  return itemTitle.replace(/^SpecFlow \w+:\s*/, '') || itemTitle;
+}
 import { runSpecFlowPhase } from './specflow-runner.ts';
 import { parseMergeFixMeta, runMergeFix } from './merge-fix.ts';
 import { parsePRMergeMeta, runPRMerge } from './pr-merge.ts';
@@ -421,6 +440,23 @@ export async function dispatch(
           });
           continue;
         }
+        // Upsert into specflow_features so cross-project features appear in dashboard
+        {
+          const ingPhase = PHASE_ING[sfMeta.specflow_phase];
+          if (ingPhase) {
+            try {
+              bb.upsertFeature({
+                feature_id: sfMeta.specflow_feature_id,
+                project_id: item.project_id!,
+                title: extractFeatureTitle(item.title),
+                phase: ingPhase as any,
+                status: 'active',
+                github_repo: sfMeta.github_repo,
+                main_branch: sfMeta.main_branch ?? 'main',
+              });
+            } catch { /* non-fatal — dashboard update is best-effort */ }
+          }
+        }
         try {
           const sfResult = await runSpecFlowPhase(bb, item, {
             project_id: item.project_id!,
@@ -430,6 +466,19 @@ export async function dispatch(
           const durationMs = Date.now() - startTime;
 
           if (sfResult.status === 'completed') {
+            // Update feature phase to *ed (completed) state
+            try {
+              const edPhase = PHASE_ED[sfMeta.specflow_phase];
+              if (edPhase) {
+                bb.upsertFeature({
+                  feature_id: sfMeta.specflow_feature_id,
+                  project_id: item.project_id!,
+                  title: extractFeatureTitle(item.title),
+                  phase: edPhase as any,
+                  status: 'pending',
+                });
+              }
+            } catch { /* non-fatal */ }
             bb.completeWorkItem(item.item_id, sessionId);
             bb.appendEvent({
               actorId: sessionId,
