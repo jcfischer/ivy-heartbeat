@@ -1,8 +1,9 @@
 import { Command } from 'commander';
 import { join } from 'node:path';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import type { CliContext } from '../cli.ts';
 import type { SpecFlowPhase } from '../scheduler/specflow-types.ts';
+import { findFeatureDir } from '../scheduler/specflow/utils/find-feature-dir.ts';
 
 /** Artifact that proves a phase is complete */
 const PHASE_ARTIFACT: Partial<Record<SpecFlowPhase, string>> = {
@@ -37,25 +38,6 @@ function detectStartPhase(
   if (!found.includes('plan.md')) return { phase: 'plan', found };
   if (!found.includes('tasks.md')) return { phase: 'tasks', found };
   return { phase: 'implement', found };
-}
-
-/**
- * Find feature directory by ID prefix (e.g., F-098 → F-098-context-assembler).
- * Mirrors the logic in specflow-runner.ts.
- */
-function findFeatureDir(specDir: string, featureId: string): string | null {
-  try {
-    const entries = readdirSync(specDir, { withFileTypes: true });
-    const prefix = featureId.toLowerCase();
-    for (const entry of entries) {
-      if (entry.isDirectory() && entry.name.toLowerCase().startsWith(prefix)) {
-        return join(specDir, entry.name);
-      }
-    }
-  } catch {
-    // specDir doesn't exist
-  }
-  return null;
 }
 
 /**

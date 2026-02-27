@@ -1,7 +1,7 @@
 import type { Blackboard } from '../blackboard.ts';
 import { generateSummary } from '../observe/summary.ts';
 import { generateDashboardHTML } from './dashboard.ts';
-import { getSpecFlowPipelines } from './api/specflow-pipeline.ts';
+import { getSpecFlowFeaturesView } from './api/specflow-pipeline.ts';
 import { renderSpecFlowPanel } from './views/specflow-panel.ts';
 
 export interface ServerOptions {
@@ -66,19 +66,21 @@ export function startServer(bb: Blackboard, opts: Partial<ServerOptions> = {}) {
           return Response.json(summary, { headers });
         }
 
-        // API: SpecFlow Pipelines
-        if (path === '/api/specflow/pipelines') {
-          const pipelines = getSpecFlowPipelines(bb);
-          return Response.json(pipelines, { headers });
-        }
-
         // API: SpecFlow Pipeline Panel HTML
         if (path === '/api/specflow/panel') {
-          const pipelines = getSpecFlowPipelines(bb);
-          const html = renderSpecFlowPanel(pipelines);
-          return new Response(html, {
-            headers: { ...headers, 'Content-Type': 'text/html' },
-          });
+          try {
+            const features = getSpecFlowFeaturesView(bb);
+            const html = renderSpecFlowPanel(features);
+            return new Response(html, {
+              headers: { ...headers, 'Content-Type': 'text/html' },
+            });
+          } catch (err) {
+            console.error('[specflow/panel]', err);
+            return new Response(JSON.stringify({ error: String(err) }), {
+              status: 500,
+              headers: { ...headers, 'Content-Type': 'application/json' },
+            });
+          }
         }
 
         // API: Search

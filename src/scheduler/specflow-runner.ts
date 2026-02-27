@@ -6,7 +6,7 @@
  */
 
 import { join, dirname } from 'node:path';
-import { existsSync, readdirSync, mkdirSync, symlinkSync, lstatSync, cpSync, readFileSync, appendFileSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, symlinkSync, lstatSync, cpSync, readFileSync, appendFileSync, unlinkSync } from 'node:fs';
 import type { Blackboard } from '../blackboard.ts';
 import type { BlackboardWorkItem } from 'ivy-blackboard/src/types';
 import { getLauncher, logPathForSession } from './launcher.ts';
@@ -39,6 +39,7 @@ import {
   getDiffSummary,
   getChangedFiles,
 } from './worktree.ts';
+import { findFeatureDir } from './specflow/utils/find-feature-dir.ts';
 
 const MAX_RETRIES = 1;
 const QUALITY_THRESHOLD = 80;
@@ -1043,25 +1044,6 @@ async function checkQualityGate(
     }
     return { passed: false, score: 0, feedback: `Failed to parse eval output: ${result.stdout}` };
   }
-}
-
-/**
- * Find the feature directory matching a feature ID.
- * Feature dirs are named like: f-019-specflow-dispatch-agent
- */
-function findFeatureDir(specDir: string, featureId: string): string | null {
-  try {
-    const entries = readdirSync(specDir, { withFileTypes: true });
-    const prefix = featureId.toLowerCase().replace('-', '-');
-    for (const entry of entries) {
-      if (entry.isDirectory() && entry.name.toLowerCase().startsWith(prefix.toLowerCase())) {
-        return join(specDir, entry.name);
-      }
-    }
-  } catch {
-    // specDir doesn't exist
-  }
-  return null;
 }
 
 // ─── Missing artifact detection & generation ────────────────────────────

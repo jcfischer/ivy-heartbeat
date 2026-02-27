@@ -19,6 +19,7 @@ import { ImplementExecutor } from './phases/implement.ts';
 import { CompleteExecutor } from './phases/complete.ts';
 import type { PhaseExecutor } from './types.ts';
 import { createWorktree, ensureWorktree } from './infra/worktree.ts';
+import { findFeatureDir } from './utils/find-feature-dir.ts';
 
 const EXECUTORS: PhaseExecutor[] = [
   new SpecifyExecutor(),
@@ -254,24 +255,6 @@ async function setupWorktree(
 }
 
 /**
- * Find the feature directory under .specify/specs/.
- */
-function findFeatureSpecDir(worktreePath: string, featureId: string): string | null {
-  try {
-    const { readdirSync } = require('node:fs');
-    const specDir = join(worktreePath, '.specify', 'specs');
-    const entries = readdirSync(specDir, { withFileTypes: true });
-    const prefix = featureId.toLowerCase();
-    for (const e of entries) {
-      if (e.isDirectory && e.name.toLowerCase().startsWith(prefix)) {
-        return join(specDir, e.name);
-      }
-    }
-  } catch {}
-  return null;
-}
-
-/**
  * Check the gate for a completed *ing phase. Advances phase to *ed if passed,
  * otherwise increments failure count and resets to pending.
  * Returns true if gate passed.
@@ -305,7 +288,8 @@ async function checkGateAndAdvance(
       try { bb.updateFeature(feature.feature_id, scoreUpdate); } catch {}
     }
   } else if (gate === 'artifact') {
-    const featureDir = findFeatureSpecDir(worktreePath, feature.feature_id);
+    const specDir = join(worktreePath, '.specify', 'specs');
+    const featureDir = findFeatureDir(specDir, feature.feature_id);
     const tasksPath = featureDir ? join(featureDir, 'tasks.md') : null;
     passed = !!(tasksPath && existsSync(tasksPath));
     gateDetails = passed ? 'tasks.md present' : 'tasks.md missing';
