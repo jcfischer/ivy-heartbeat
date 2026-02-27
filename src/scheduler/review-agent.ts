@@ -94,19 +94,22 @@ export function buildReviewPrompt(ctx: ReviewContext): string {
     '',
     'After reviewing, execute EXACTLY these steps:',
     '',
-    '1. Post your review as a GitHub PR review:',
-    `   - If NO critical or high issues AND no code duplication: gh pr review ${ctx.prNumber} --repo ${ctx.repo} --approve --body "AI Review: APPROVED\\n\\n[your review summary]"`,
-    `   - If critical/high issues OR any code duplication found: gh pr review ${ctx.prNumber} --repo ${ctx.repo} --request-changes --body "AI Review: CHANGES REQUESTED\\n\\n[your findings]"`,
+    '1. Post your review verdict to GitHub. Try in this order:',
+    `   a) First attempt: gh pr review ${ctx.prNumber} --repo ${ctx.repo} --approve --body "..."  OR  gh pr review ${ctx.prNumber} --repo ${ctx.repo} --request-changes --body "..."`,
+    "      (This may fail with \"Can't request changes on own PR\" or \"You can't approve your own pull request\" — that is expected and OK.)",
+    `   b) If step (a) fails: gh pr comment ${ctx.prNumber} --repo ${ctx.repo} --body "AI Review: <APPROVED or CHANGES REQUESTED>\\n\\n[your full review]"`,
+    '      (Comments always work, even on your own PRs. Use this as the fallback.)',
     '',
     '   HARD RULE: Any code duplication or redundant implementations MUST result in changes_requested.',
     '   Even minor duplication is not acceptable — request extraction to shared code before approving.',
     '',
-    '2. Output a structured summary (replace placeholders with actual values):',
+    '2. ALWAYS output a structured summary regardless of whether step 1 succeeded or failed:',
     '   REVIEW_RESULT: <approved or changes_requested>',
     '   FINDINGS_COUNT: <number>',
     '   SEVERITY: <low or medium or high or critical>',
     '   SUMMARY: <one paragraph summary>',
     '',
+    'CRITICAL: Output the structured summary (step 2) NO MATTER WHAT — even if the gh command failed.',
     'IMPORTANT: You must NEVER merge the PR. You must NEVER modify any code. You only review and comment.',
   );
 
@@ -218,6 +221,25 @@ export async function dispatchReviewAgent(
       });
     } catch {
       // Merge item creation failed (non-fatal — PR can be merged manually)
+    }
+  }
+
+  // On unknown: re-queue the review work item (agent failed to produce structured output)
+  if (review.status === 'unknown') {
+    const retryCount = (existingMeta.review_retry_count ?? 0) + 1;
+    if (retryCount <= 3 && existingMeta.repo && existingMeta.branch) {
+      try {
+        bb.createWorkItem({
+          id: `review-${item.project_id}-pr-${ctx.prNumber}-retry-${retryCount}`,
+          title: item.title,
+          description: `${item.description ?? ''}\n\n[Retry ${retryCount}/3: previous review produced no structured output]`,
+          project: item.project_id ?? '',
+          source: 'code_review',
+          sourceRef: existingMeta.pr_url ?? `https://github.com/${ctx.repo}/pull/${ctx.prNumber}`,
+          priority: 'P1',
+          metadata: JSON.stringify({ ...existingMeta, review_retry_count: retryCount }),
+        });
+      } catch {}
     }
   }
 
