@@ -1,4 +1,4 @@
-import { join, dirname } from 'node:path';
+import { join, dirname, relative } from 'node:path';
 import { existsSync, mkdirSync, symlinkSync, lstatSync, readdirSync } from 'node:fs';
 import { Database as SpecflowDb } from 'bun:sqlite';
 import type { Blackboard } from '../../blackboard.ts';
@@ -188,16 +188,16 @@ function ensureSpecflowInWorktree(worktreePath: string, projectPath: string): vo
   try {
     if (!existsSync(worktreeSpecflowDir)) {
       mkdirSync(dirname(worktreeSpecflowDir), { recursive: true });
-      symlinkSync(sourceSpecflowDir, worktreeSpecflowDir, 'dir');
+      symlinkSync(relative(dirname(worktreeSpecflowDir), sourceSpecflowDir), worktreeSpecflowDir, 'dir');
     } else {
       // Directory exists (possibly empty from git checkout) — symlink DB files individually
       const featuresDest = join(worktreeSpecflowDir, 'features.db');
       if (!existsSync(featuresDest)) {
-        symlinkSync(join(sourceSpecflowDir, 'features.db'), featuresDest);
+        symlinkSync(relative(worktreeSpecflowDir, join(sourceSpecflowDir, 'features.db')), featuresDest);
       }
       const evalsDest = join(worktreeSpecflowDir, 'evals.db');
       if (!existsSync(evalsDest) && existsSync(join(sourceSpecflowDir, 'evals.db'))) {
-        symlinkSync(join(sourceSpecflowDir, 'evals.db'), evalsDest);
+        symlinkSync(relative(worktreeSpecflowDir, join(sourceSpecflowDir, 'evals.db')), evalsDest);
       }
     }
   } catch {
@@ -258,7 +258,7 @@ function ensureSpecDirInWorktree(worktreePath: string, projectPath: string, feat
     if (existsSync(destDir)) return; // already there (e.g. committed via git)
 
     mkdirSync(destSpecsDir, { recursive: true });
-    symlinkSync(srcDir, destDir, 'dir');
+    symlinkSync(relative(destSpecsDir, srcDir), destDir, 'dir');
   } catch {
     // Non-fatal
   }
