@@ -18,7 +18,7 @@ import {
   buildCommentPrompt,
   setReviewCycleAccessor,
 } from '../scheduler/worktree.ts';
-import { parseSpecFlowMeta } from '../scheduler/specflow-types.ts';
+import { parseSpecFlowMeta, type SpecFlowPhase } from '../scheduler/specflow-types.ts';
 import { runSpecFlowPhase } from '../scheduler/specflow-runner.ts';
 import { parseMergeFixMeta, createMergeFixWorkItem, runMergeFix } from '../scheduler/merge-fix.ts';
 import { parsePRMergeMeta, runPRMerge } from '../scheduler/pr-merge.ts';
@@ -27,6 +27,22 @@ import { dispatchReviewAgent } from '../scheduler/review-agent.ts';
 import { parseReflectMeta, runReflect } from '../scheduler/reflect.ts';
 import { handleReflectWorkItem } from '../scheduler/reflect-handler.ts';
 import { getTanaAccessor } from '../evaluators/tana-accessor.ts';
+
+/** Map specflow work item phase verb → active (*ing) feature phase */
+const PHASE_ING: Partial<Record<SpecFlowPhase, string>> = {
+  specify: 'specifying', plan: 'planning', tasks: 'tasking',
+  implement: 'implementing', complete: 'completing',
+};
+
+/** Map specflow work item phase verb → completed (*ed) feature phase */
+const PHASE_ED: Partial<Record<SpecFlowPhase, string>> = {
+  specify: 'specified', plan: 'planned', tasks: 'tasked',
+  implement: 'implemented', complete: 'completed',
+};
+
+function extractFeatureTitle(itemTitle: string): string {
+  return itemTitle.replace(/^SpecFlow \w+:\s*/, '') || itemTitle;
+}
 
 /**
  * Parse work item metadata to extract GitHub-specific fields.
@@ -424,6 +440,23 @@ export function registerDispatchWorkerCommand(
             return;
           }
         }
+        // Upsert into specflow_features so orchestrator can track and chain phases
+        {
+          const ingPhase = PHASE_ING[sfMeta.specflow_phase];
+          if (ingPhase) {
+            try {
+              bb.upsertFeature({
+                feature_id: sfMeta.specflow_feature_id,
+                project_id: item.project_id!,
+                title: extractFeatureTitle(item.title),
+                phase: ingPhase as any,
+                status: 'active',
+                github_repo: sfMeta.github_repo,
+                main_branch: sfMeta.main_branch ?? 'main',
+              });
+            } catch { /* non-fatal — dashboard update is best-effort */ }
+          }
+        }
         try {
           const sfResult = await runSpecFlowPhase(bb, item, {
             project_id: item.project_id!,
@@ -431,6 +464,19 @@ export function registerDispatchWorkerCommand(
           }, sessionId);
 
           if (sfResult.status === 'completed' || sfResult.status === 'retry') {
+            // Update feature phase to *ed (completed) state so orchestrator chains
+            try {
+              const edPhase = PHASE_ED[sfMeta.specflow_phase];
+              if (edPhase) {
+                bb.upsertFeature({
+                  feature_id: sfMeta.specflow_feature_id,
+                  project_id: item.project_id!,
+                  title: extractFeatureTitle(item.title),
+                  phase: edPhase as any,
+                  status: 'pending',
+                });
+              }
+            } catch { /* non-fatal */ }
             bb.completeWorkItem(itemId, sessionId);
             bb.appendEvent({
               actorId: sessionId,
