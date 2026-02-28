@@ -407,17 +407,22 @@ export function registerDispatchWorkerCommand(
       // Determine if this is a SpecFlow work item
       const sfMeta = parseSpecFlowMeta(item.metadata);
       if (sfMeta) {
-        // When the new orchestrator is active, silently complete residual work items
+        // When the orchestrator is active, skip only features it actively manages
+        // (i.e., features registered in the specflow_features table). Cross-project
+        // features not in the table are dispatched normally via runSpecFlowPhase.
         if (process.env.SPECFLOW_ORCHESTRATOR === 'true') {
-          bb.completeWorkItem(itemId, sessionId);
-          bb.appendEvent({
-            actorId: sessionId,
-            targetId: itemId,
-            summary: `SpecFlow work item skipped — orchestrator active (SPECFLOW_ORCHESTRATOR=true)`,
-            metadata: { phase: sfMeta.specflow_phase, featureId: sfMeta.specflow_feature_id },
-          });
-          try { bb.deregisterAgent(sessionId); } catch { /* best effort */ }
-          return;
+          const managedFeature = bb.getFeature(sfMeta.specflow_feature_id);
+          if (managedFeature) {
+            bb.completeWorkItem(itemId, sessionId);
+            bb.appendEvent({
+              actorId: sessionId,
+              targetId: itemId,
+              summary: `SpecFlow work item skipped — orchestrator manages ${sfMeta.specflow_feature_id}`,
+              metadata: { phase: sfMeta.specflow_phase, featureId: sfMeta.specflow_feature_id },
+            });
+            try { bb.deregisterAgent(sessionId); } catch { /* best effort */ }
+            return;
+          }
         }
         try {
           const sfResult = await runSpecFlowPhase(bb, item, {
