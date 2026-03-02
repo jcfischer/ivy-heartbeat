@@ -1,3 +1,14 @@
+/**
+ * A blocking issue identified in a code review cycle.
+ * These issues are tracked across review/rework cycles until resolved.
+ */
+export interface BlockingIssue {
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  description: string;
+  cycle: number;
+  resolved: boolean;
+}
+
 export interface DispatchOptions {
   /** Max concurrent agent sessions (default: 1) */
   maxConcurrent: number;

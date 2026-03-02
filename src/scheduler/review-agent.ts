@@ -5,6 +5,7 @@ import type { BlackboardWorkItem } from 'ivy-blackboard/src/types';
 import { getLauncher, logPathForSession } from './launcher.ts';
 import { createReworkWorkItem } from './rework.ts';
 import { createPRMergeWorkItem } from './pr-merge.ts';
+import type { BlockingIssue } from './types.ts';
 
 interface ReviewContext {
   prNumber: number;
@@ -13,16 +14,6 @@ interface ReviewContext {
   projectPath: string;
   specPath?: string;
   priorBlockingIssues?: BlockingIssue[];
-}
-
-/**
- * A blocking issue identified in a prior review cycle.
- */
-export interface BlockingIssue {
-  severity: 'critical' | 'high' | 'medium' | 'low';
-  description: string;
-  cycle: number;
-  resolved: boolean;
 }
 
 /**

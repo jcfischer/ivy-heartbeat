@@ -2,8 +2,8 @@ import { test, expect, describe } from 'bun:test';
 import {
   parseReviewResult,
   buildReviewPrompt,
-  type BlockingIssue,
 } from '../src/scheduler/review-agent.ts';
+import type { BlockingIssue } from '../src/scheduler/types.ts';
 
 describe('parseReviewResult - blocking issues extraction', () => {
   test('extracts blocking issues from structured output', () => {

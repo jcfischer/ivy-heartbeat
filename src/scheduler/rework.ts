@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import type { Blackboard } from '../blackboard.ts';
 import type { BlackboardProject, BlackboardWorkItem } from 'ivy-blackboard/src/types';
-import type { SessionLauncher } from './types.ts';
+import type { SessionLauncher, BlockingIssue } from './types.ts';
 import { formatInlineComments, type InlineComment } from './pr-comments.ts';
 import {
   stashIfDirty,
@@ -26,16 +26,6 @@ export const MAX_REWORK_CYCLES = 3;
  * Projects can override via project metadata `max_rework_cycles`.
  */
 export const DEFAULT_MAX_REWORK_CYCLES = 2;
-
-/**
- * A blocking issue identified in a prior review cycle.
- */
-export interface BlockingIssue {
-  severity: 'critical' | 'high' | 'medium' | 'low';
-  description: string;
-  cycle: number;
-  resolved: boolean;
-}
 
 /**
  * Metadata shape for rework work items.
