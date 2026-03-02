@@ -657,6 +657,7 @@ export async function dispatch(
             repo: reviewMeta.repo,
             branch: reviewMeta.branch ?? '',
             projectPath: project?.local_path ?? resolvedWorkDir,
+            priorBlockingIssues: Array.isArray(reviewMeta.blocking_issues) ? reviewMeta.blocking_issues : undefined,
           }, sessionId, opts.timeout * 60 * 1000);
           const durationMs = Date.now() - startTime;
           result.dispatched.push({ itemId: item.item_id, title: item.title, projectId: item.project_id ?? '(none)', sessionId, exitCode: 0, completed: true, durationMs });

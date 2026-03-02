@@ -28,6 +28,16 @@ export const MAX_REWORK_CYCLES = 3;
 export const DEFAULT_MAX_REWORK_CYCLES = 2;
 
 /**
+ * A blocking issue identified in a prior review cycle.
+ */
+export interface BlockingIssue {
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  description: string;
+  cycle: number;
+  resolved: boolean;
+}
+
+/**
  * Metadata shape for rework work items.
  */
 export interface ReworkMetadata {
@@ -47,6 +57,8 @@ export interface ReworkMetadata {
   inline_comments?: InlineComment[];
   /** Configurable max rework cycles for this project. */
   max_rework_cycles?: number;
+  /** Blocking issues from all prior review cycles. */
+  blocking_issues?: BlockingIssue[];
 }
 
 /**
@@ -72,6 +84,7 @@ export function parseReworkMeta(metadata: string | null): ReworkMetadata | null 
         worktree_path: parsed.worktree_path,
         inline_comments: Array.isArray(parsed.inline_comments) ? parsed.inline_comments : undefined,
         max_rework_cycles: typeof parsed.max_rework_cycles === 'number' ? parsed.max_rework_cycles : undefined,
+        blocking_issues: Array.isArray(parsed.blocking_issues) ? parsed.blocking_issues : undefined,
       };
     }
   } catch {
@@ -136,6 +149,7 @@ export function createReworkWorkItem(
     worktreePath?: string;
     inlineComments?: InlineComment[];
     maxReworkCycles?: number;
+    blockingIssues?: BlockingIssue[];
   }
 ): string | null {
   // Resolve effective max cycles
@@ -218,6 +232,7 @@ export function createReworkWorkItem(
     worktree_path: opts.worktreePath,
     inline_comments: opts.inlineComments,
     max_rework_cycles: effectiveMax,
+    blocking_issues: opts.blockingIssues,
   };
 
   bb.createWorkItem({
@@ -336,6 +351,7 @@ export async function runRework(
           rework_cycle: meta.rework_cycle,
           worktree_path: wtPath,
           review_status: null,
+          blocking_issues: meta.blocking_issues ?? [],
         }),
       });
       bb.appendEvent({

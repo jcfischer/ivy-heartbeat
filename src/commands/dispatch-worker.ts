@@ -592,6 +592,7 @@ export function registerDispatchWorkerCommand(
             repo: reviewMeta.repo,
             branch: reviewMeta.branch ?? '',
             projectPath: project?.local_path ?? resolvedWorkDir,
+            priorBlockingIssues: Array.isArray(reviewMeta.blocking_issues) ? reviewMeta.blocking_issues : undefined,
           }, sessionId, timeoutMs);
 
           bb.appendEvent({
