@@ -42,7 +42,7 @@ import { runSpecFlowPhase } from './specflow-runner.ts';
 import { parseMergeFixMeta, runMergeFix } from './merge-fix.ts';
 import { parsePRMergeMeta, runPRMerge } from './pr-merge.ts';
 import { parseReworkMeta, runRework } from './rework.ts';
-import { dispatchReviewAgent } from './review-agent.ts';
+import { dispatchReviewAgent, parseReviewMeta } from './review-agent.ts';
 import { parseReflectMeta, runReflect } from './reflect.ts';
 import { handleReflectWorkItem } from './reflect-handler.ts';
 import type {
@@ -649,14 +649,15 @@ export async function dispatch(
       }
 
       // Determine if this is a code_review work item
-      const reviewMeta = item.metadata ? (() => { try { return JSON.parse(item.metadata!); } catch { return {}; } })() : {};
-      if (item.source === 'code_review' && reviewMeta.pr_number && reviewMeta.repo) {
+      const reviewMeta = parseReviewMeta(item.metadata);
+      if (item.source === 'code_review' && reviewMeta) {
         try {
           await dispatchReviewAgent(bb, item, {
             prNumber: reviewMeta.pr_number,
             repo: reviewMeta.repo,
-            branch: reviewMeta.branch ?? '',
+            branch: reviewMeta.branch,
             projectPath: project?.local_path ?? resolvedWorkDir,
+            priorBlockingIssues: reviewMeta.blocking_issues,
           }, sessionId, opts.timeout * 60 * 1000);
           const durationMs = Date.now() - startTime;
           result.dispatched.push({ itemId: item.item_id, title: item.title, projectId: item.project_id ?? '(none)', sessionId, exitCode: 0, completed: true, durationMs });

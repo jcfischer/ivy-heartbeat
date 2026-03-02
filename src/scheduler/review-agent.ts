@@ -5,6 +5,7 @@ import type { BlackboardWorkItem } from 'ivy-blackboard/src/types';
 import { getLauncher, logPathForSession } from './launcher.ts';
 import { createReworkWorkItem } from './rework.ts';
 import { createPRMergeWorkItem } from './pr-merge.ts';
+import type { BlockingIssue } from './types.ts';
 
 interface ReviewContext {
   prNumber: number;
@@ -12,6 +13,54 @@ interface ReviewContext {
   branch: string;
   projectPath: string;
   specPath?: string;
+  priorBlockingIssues?: BlockingIssue[];
+}
+
+/**
+ * Metadata shape for code review work items.
+ * Contains PR information and blocking issues from prior review cycles.
+ */
+export interface ReviewMetadata {
+  pr_number: number;
+  pr_url?: string;
+  repo: string;
+  branch: string;
+  main_branch?: string;
+  implementation_work_item_id?: string;
+  rework_cycle?: number;
+  worktree_path?: string;
+  review_status?: string | null;
+  blocking_issues?: BlockingIssue[];
+}
+
+/**
+ * Parse work item metadata to extract review fields.
+ * Returns null if the metadata does not represent a review item.
+ */
+export function parseReviewMeta(metadata: string | null): ReviewMetadata | null {
+  if (!metadata) return null;
+  try {
+    const parsed = JSON.parse(metadata);
+    // A review item must have at minimum: pr_number and repo
+    // source='code_review' is the primary indicator, but we check required fields
+    if (parsed.pr_number && parsed.repo) {
+      return {
+        pr_number: parsed.pr_number,
+        pr_url: parsed.pr_url,
+        repo: parsed.repo,
+        branch: parsed.branch ?? '',
+        main_branch: parsed.main_branch,
+        implementation_work_item_id: parsed.implementation_work_item_id,
+        rework_cycle: typeof parsed.rework_cycle === 'number' ? parsed.rework_cycle : undefined,
+        worktree_path: parsed.worktree_path,
+        review_status: parsed.review_status !== undefined ? parsed.review_status : undefined,
+        blocking_issues: Array.isArray(parsed.blocking_issues) ? parsed.blocking_issues : undefined,
+      };
+    }
+  } catch {
+    // Invalid metadata JSON
+  }
+  return null;
 }
 
 /**
@@ -22,13 +71,71 @@ export function buildReviewPrompt(ctx: ReviewContext): string {
   const parts: string[] = [
     `You are a code review agent for the PAI system. You are reviewing PR #${ctx.prNumber} in ${ctx.repo}.`,
     '',
+  ];
+
+  // If prior blocking issues exist, require explicit verification
+  if (ctx.priorBlockingIssues && ctx.priorBlockingIssues.length > 0) {
+    const unresolvedCritical = ctx.priorBlockingIssues.filter(i => !i.resolved && i.severity === 'critical');
+    const unresolvedHigh = ctx.priorBlockingIssues.filter(i => !i.resolved && i.severity === 'high');
+    const unresolvedOther = ctx.priorBlockingIssues.filter(i => !i.resolved && (i.severity === 'medium' || i.severity === 'low'));
+
+    // Only show the section if there are unresolved issues
+    const hasUnresolvedIssues = unresolvedCritical.length > 0 || unresolvedHigh.length > 0 || unresolvedOther.length > 0;
+    if (hasUnresolvedIssues) {
+
+    parts.push(
+      '## CRITICAL: Unresolved Blocking Issues from Prior Cycles',
+      '',
+      '⚠️  **Prior review cycles identified blocking issues that MUST be resolved before approval.**',
+      '',
+      'You MUST explicitly verify each issue below is resolved. Do not approve until ALL critical',
+      'and high-severity issues are addressed. If any remain unresolved, you MUST request changes.',
+      '',
+    );
+
+    if (unresolvedCritical.length > 0) {
+      parts.push('### Critical Issues (MUST be resolved):', '');
+      unresolvedCritical.forEach((issue, idx) => {
+        parts.push(`${idx + 1}. [Cycle ${issue.cycle}] ${issue.description}`);
+      });
+      parts.push('');
+    }
+
+    if (unresolvedHigh.length > 0) {
+      parts.push('### High-Severity Issues (MUST be resolved):', '');
+      unresolvedHigh.forEach((issue, idx) => {
+        parts.push(`${idx + 1}. [Cycle ${issue.cycle}] ${issue.description}`);
+      });
+      parts.push('');
+    }
+
+    if (unresolvedOther.length > 0) {
+      parts.push('### Other Issues (should be resolved):', '');
+      unresolvedOther.forEach((issue, idx) => {
+        parts.push(`${idx + 1}. [Cycle ${issue.cycle}] ${issue.description}`);
+      });
+      parts.push('');
+    }
+
+      parts.push(
+        '**You MUST include in your review output:**',
+        '- For each unresolved issue: whether it is NOW resolved (yes/no)',
+        '- Evidence supporting your resolution determination (file/line references)',
+        '',
+        '---',
+        '',
+      );
+    }
+  }
+
+  parts.push(
     '## Instructions',
     '',
     '1. First, fetch the PR diff and file list:',
     `   gh pr diff ${ctx.prNumber} --repo ${ctx.repo}`,
     `   gh pr view ${ctx.prNumber} --repo ${ctx.repo} --json files`,
     '',
-  ];
+  );
 
   // Try to include spec/plan context
   if (ctx.specPath) {
@@ -108,6 +215,14 @@ export function buildReviewPrompt(ctx: ReviewContext): string {
     '   FINDINGS_COUNT: <number>',
     '   SEVERITY: <low or medium or high or critical>',
     '   SUMMARY: <one paragraph summary>',
+    '   BLOCKING_ISSUES: <JSON array of new blocking issues, or empty array []>',
+    '',
+    '   Format for BLOCKING_ISSUES (one per line, each as valid JSON):',
+    '   BLOCKING_ISSUES: [{"severity":"critical","description":"No implementation code found"},{"severity":"high","description":"Missing error handling"}]',
+    '',
+    '   Include only NEW blocking issues found in THIS review cycle.',
+    '   Severity levels: critical (no implementation, broken functionality), high (security, data loss),',
+    '   medium (code quality, tech debt), low (style, documentation).',
     '',
     'CRITICAL: Output the structured summary (step 2) NO MATTER WHAT — even if the gh command failed.',
     'IMPORTANT: You must NEVER merge the PR. You must NEVER modify any code. You only review and comment.',
@@ -130,6 +245,7 @@ export function parseReviewResult(output: string): {
   findingsCount: number;
   severity: string;
   summary: string;
+  blockingIssues: BlockingIssue[];
 } {
   // Preprocess: strip markdown bold and angle-bracket placeholders
   const cleaned = output
@@ -143,17 +259,40 @@ export function parseReviewResult(output: string): {
   const countMatches = [...cleaned.matchAll(/FINDINGS_COUNT:\s*(\d+)/gi)];
   const severityMatches = [...cleaned.matchAll(/SEVERITY:\s*(\w+)/gi)];
   const summaryMatches = [...cleaned.matchAll(/SUMMARY:\s*(.+)/gi)];
+  const blockingMatches = [...cleaned.matchAll(/BLOCKING_ISSUES:\s*(\[.*?\])/gi)];
 
   const lastStatus = statusMatches.at(-1);
   const lastCount = countMatches.at(-1);
   const lastSeverity = severityMatches.at(-1);
   const lastSummary = summaryMatches.at(-1);
+  const lastBlocking = blockingMatches.at(-1);
+
+  // Parse blocking issues JSON array
+  let blockingIssues: BlockingIssue[] = [];
+  if (lastBlocking?.[1]) {
+    try {
+      const parsed = JSON.parse(lastBlocking[1]);
+      if (Array.isArray(parsed)) {
+        blockingIssues = parsed
+          .filter((item: any) => item.severity && item.description)
+          .map((item: any) => ({
+            severity: item.severity as 'critical' | 'high' | 'medium' | 'low',
+            description: item.description,
+            cycle: 0, // Will be set by caller
+            resolved: false,
+          }));
+      }
+    } catch {
+      // Invalid JSON — ignore blocking issues
+    }
+  }
 
   return {
     status: (lastStatus?.[1]?.toLowerCase() as 'approved' | 'changes_requested') ?? 'unknown',
     findingsCount: lastCount ? parseInt(lastCount[1], 10) : 0,
     severity: lastSeverity?.[1] ?? 'unknown',
     summary: lastSummary?.[1] ?? 'No summary available',
+    blockingIssues,
   };
 }
 
@@ -181,14 +320,29 @@ export async function dispatchReviewAgent(
 
   const review = parseReviewResult(result.stdout);
 
-  // Update work item metadata with review results
+  // Merge with prior blocking issues from metadata
   const existingMeta = item.metadata ? JSON.parse(item.metadata) : {};
+  const priorBlockingIssues: BlockingIssue[] = Array.isArray(existingMeta.blocking_issues)
+    ? existingMeta.blocking_issues
+    : [];
+
+  // Set cycle number on newly found blocking issues
+  const currentCycle = (existingMeta.rework_cycle ?? 0) + 1;
+  const newBlockingIssues = review.blockingIssues.map(issue => ({
+    ...issue,
+    cycle: currentCycle,
+  }));
+
+  // Combine: keep prior unresolved issues + add new ones
+  const allBlockingIssues = [...priorBlockingIssues, ...newBlockingIssues];
+
   const updatedMeta = {
     ...existingMeta,
     review_status: review.status,
     review_findings_count: review.findingsCount,
     review_severity: review.severity,
     reviewer_session_id: sessionId,
+    blocking_issues: allBlockingIssues,
   };
 
   // Complete the review work item
@@ -245,7 +399,7 @@ export async function dispatchReviewAgent(
 
   // On changes_requested: create a rework work item so the feedback loop continues
   if (review.status === 'changes_requested' && existingMeta.repo && existingMeta.branch) {
-    const currentCycle = (existingMeta.rework_cycle ?? 0) + 1;
+    const nextCycle = (existingMeta.rework_cycle ?? 0) + 1;
     createReworkWorkItem(bb, {
       prNumber: existingMeta.pr_number ?? ctx.prNumber,
       prUrl: existingMeta.pr_url ?? `https://github.com/${ctx.repo}/pull/${ctx.prNumber}`,
@@ -254,10 +408,11 @@ export async function dispatchReviewAgent(
       mainBranch: existingMeta.main_branch ?? 'main',
       implementationWorkItemId: targetId,
       reviewFeedback: review.summary,
-      reworkCycle: currentCycle,
+      reworkCycle: nextCycle,
       projectId: item.project_id ?? '',
       originalTitle: item.title.replace(/^Code review:\s*/i, ''),
       sessionId,
+      blockingIssues: allBlockingIssues,
     });
   }
 

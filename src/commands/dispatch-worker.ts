@@ -23,7 +23,7 @@ import { runSpecFlowPhase } from '../scheduler/specflow-runner.ts';
 import { parseMergeFixMeta, createMergeFixWorkItem, runMergeFix } from '../scheduler/merge-fix.ts';
 import { parsePRMergeMeta, runPRMerge } from '../scheduler/pr-merge.ts';
 import { parseReworkMeta, runRework } from '../scheduler/rework.ts';
-import { dispatchReviewAgent } from '../scheduler/review-agent.ts';
+import { dispatchReviewAgent, parseReviewMeta } from '../scheduler/review-agent.ts';
 import { parseReflectMeta, runReflect } from '../scheduler/reflect.ts';
 import { handleReflectWorkItem } from '../scheduler/reflect-handler.ts';
 import { getTanaAccessor } from '../evaluators/tana-accessor.ts';
@@ -584,14 +584,15 @@ export function registerDispatchWorkerCommand(
       }
 
       // Determine if this is a code_review work item (dispatch review agent)
-      const reviewMeta = item.metadata ? (() => { try { return JSON.parse(item.metadata!); } catch { return {}; } })() : {};
-      if (item.source === 'code_review' && reviewMeta.pr_number && reviewMeta.repo) {
+      const reviewMeta = parseReviewMeta(item.metadata);
+      if (item.source === 'code_review' && reviewMeta) {
         try {
           const reviewResult = await dispatchReviewAgent(bb, item, {
             prNumber: reviewMeta.pr_number,
             repo: reviewMeta.repo,
-            branch: reviewMeta.branch ?? '',
+            branch: reviewMeta.branch,
             projectPath: project?.local_path ?? resolvedWorkDir,
+            priorBlockingIssues: reviewMeta.blocking_issues,
           }, sessionId, timeoutMs);
 
           bb.appendEvent({
