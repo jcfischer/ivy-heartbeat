@@ -203,7 +203,7 @@ export async function runPRMerge(
   }
 
   // Merge genuinely failed — create merge-fix recovery item
-  const mergeFixId = createMergeFixWorkItem(bb, {
+  const mergeFixId = await createMergeFixWorkItem(bb, project, {
     originalItemId: meta.implementation_work_item_id,
     prNumber: meta.pr_number,
     prUrl: meta.pr_url,
@@ -214,12 +214,14 @@ export async function runPRMerge(
     sessionId,
   });
 
-  bb.appendEvent({
-    actorId: sessionId,
-    targetId: item.item_id,
-    summary: `PR #${meta.pr_number} merge failed — created merge-fix recovery item ${mergeFixId}`,
-    metadata: { prNumber: meta.pr_number, mergeFixItemId: mergeFixId },
-  });
+  if (mergeFixId) {
+    bb.appendEvent({
+      actorId: sessionId,
+      targetId: item.item_id,
+      summary: `PR #${meta.pr_number} merge failed — created merge-fix recovery item ${mergeFixId}`,
+      metadata: { prNumber: meta.pr_number, mergeFixItemId: mergeFixId },
+    });
+  }
 }
 
 /**
