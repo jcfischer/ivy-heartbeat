@@ -803,7 +803,7 @@ export function registerDispatchWorkerCommand(
                         });
                       } else {
                         // Create recovery work item for merge failure
-                        const mergeFixId = createMergeFixWorkItem(bb, {
+                        const mergeFixId = await createMergeFixWorkItem(bb, project, {
                           originalItemId: itemId,
                           prNumber: pr.number,
                           prUrl: pr.url,
@@ -814,12 +814,14 @@ export function registerDispatchWorkerCommand(
                           originalTitle: item.title,
                           sessionId,
                         });
-                        bb.appendEvent({
-                          actorId: sessionId,
-                          targetId: itemId,
-                          summary: `Auto-merge failed for PR #${pr.number} — created recovery item ${mergeFixId}`,
-                          metadata: { prNumber: pr.number, autoMerge: false, mergeFixItemId: mergeFixId },
-                        });
+                        if (mergeFixId) {
+                          bb.appendEvent({
+                            actorId: sessionId,
+                            targetId: itemId,
+                            summary: `Auto-merge failed for PR #${pr.number} — created recovery item ${mergeFixId}`,
+                            metadata: { prNumber: pr.number, autoMerge: false, mergeFixItemId: mergeFixId },
+                          });
+                        }
                       }
                     }
                   } catch (mergeErr: unknown) {
@@ -836,7 +838,7 @@ export function registerDispatchWorkerCommand(
                       });
                     } else {
                       // Create recovery work item for merge error
-                      const mergeFixId = createMergeFixWorkItem(bb, {
+                      const mergeFixId = await createMergeFixWorkItem(bb, project, {
                         originalItemId: itemId,
                         prNumber: pr.number,
                         prUrl: pr.url,
@@ -847,12 +849,14 @@ export function registerDispatchWorkerCommand(
                         originalTitle: item.title,
                         sessionId,
                       });
-                      bb.appendEvent({
-                        actorId: sessionId,
-                        targetId: itemId,
-                        summary: `Auto-merge error for PR #${pr.number}: ${mergeMsg} — created recovery item ${mergeFixId}`,
-                        metadata: { prNumber: pr.number, error: mergeMsg, mergeFixItemId: mergeFixId },
-                      });
+                      if (mergeFixId) {
+                        bb.appendEvent({
+                          actorId: sessionId,
+                          targetId: itemId,
+                          summary: `Auto-merge error for PR #${pr.number}: ${mergeMsg} — created recovery item ${mergeFixId}`,
+                          metadata: { prNumber: pr.number, error: mergeMsg, mergeFixItemId: mergeFixId },
+                        });
+                      }
                     }
                   }
                 }

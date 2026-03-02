@@ -57,10 +57,13 @@ export function parseMergeFixMeta(metadata: string | null): MergeFixMetadata | n
  * Create a merge-fix recovery work item on the blackboard.
  * Called when auto-merge fails on a trusted path.
  *
- * Returns the created work item ID.
+ * Returns the created work item ID, or null if:
+ * - The PR is already merged (no recovery needed)
+ * - A merge-fix item for this PR already exists (avoid duplicates)
  */
-export function createMergeFixWorkItem(
+export async function createMergeFixWorkItem(
   bb: Blackboard,
+  project: BlackboardProject,
   opts: {
     originalItemId: string;
     prNumber: number;
@@ -72,8 +75,45 @@ export function createMergeFixWorkItem(
     originalTitle: string;
     sessionId?: string;
   }
-): string {
+): Promise<string | null> {
+  // Check 1: Is the PR already merged? If so, no recovery needed.
+  try {
+    const prState = await getPRState(project.local_path, opts.prNumber);
+    if (prState === 'MERGED') {
+      bb.appendEvent({
+        actorId: opts.sessionId,
+        targetId: opts.originalItemId,
+        summary: `Skipping merge-fix for PR #${opts.prNumber} — already merged`,
+        metadata: { prNumber: opts.prNumber, prState: 'MERGED', reason: 'already_merged' },
+      });
+      return null;
+    }
+  } catch (err) {
+    // If we can't check merge status, proceed with item creation (fail-open)
+    bb.appendEvent({
+      actorId: opts.sessionId,
+      targetId: opts.originalItemId,
+      summary: `Could not verify merge status for PR #${opts.prNumber}, proceeding with merge-fix creation`,
+      metadata: { prNumber: opts.prNumber, error: String(err) },
+    });
+  }
+
   const itemId = `merge-fix-${opts.originalItemId}-${opts.prNumber}`;
+
+  // Check 2: Does a merge-fix item for this PR already exist?
+  const existingItems = bb.listWorkItems();
+  const existingItem = existingItems.find((item) => item.item_id === itemId);
+  if (existingItem) {
+    bb.appendEvent({
+      actorId: opts.sessionId,
+      targetId: opts.originalItemId,
+      summary: `Skipping merge-fix for PR #${opts.prNumber} — item "${itemId}" already exists (status: ${existingItem.status})`,
+      metadata: { prNumber: opts.prNumber, existingItemId: itemId, existingStatus: existingItem.status, reason: 'duplicate' },
+    });
+    return itemId;
+  }
+
+  // Both checks passed — create the merge-fix work item
   const title = opts.issueNumber
     ? `Fix merge conflict: PR #${opts.prNumber} for #${opts.issueNumber}`
     : `Fix merge conflict: PR #${opts.prNumber}`;

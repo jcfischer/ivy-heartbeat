@@ -82,10 +82,21 @@ describe('parseMergeFixMeta', () => {
 });
 
 describe('createMergeFixWorkItem', () => {
-  test('creates a P1 work item with correct ID and title', () => {
-    registerProject(ctx.bb.db, { id: 'proj-a', name: 'Project A', path: '/tmp/proj-a' });
+  test('creates a P1 work item with correct ID and title', async () => {
+    const mockGetPRState = mock(() => Promise.resolve('OPEN' as const));
+    mock.module('../src/scheduler/worktree.ts', () => {
+      const actual = require('../src/scheduler/worktree.ts');
+      return {
+        ...actual,
+        getPRState: mockGetPRState,
+      };
+    });
+    const { createMergeFixWorkItem: createFn } = await import('../src/scheduler/merge-fix.ts');
 
-    const itemId = createMergeFixWorkItem(ctx.bb, {
+    registerProject(ctx.bb.db, { id: 'proj-a', name: 'Project A', path: '/tmp/proj-a' });
+    const project = ctx.bb.getProject('proj-a')!;
+
+    const itemId = await createFn(ctx.bb, project, {
       originalItemId: 'gh-repo-10',
       prNumber: 42,
       prUrl: 'https://github.com/owner/repo/pull/42',
@@ -116,10 +127,18 @@ describe('createMergeFixWorkItem', () => {
     expect(meta.original_item_id).toBe('gh-repo-10');
   });
 
-  test('creates title without issue number when not provided', () => {
-    registerProject(ctx.bb.db, { id: 'proj-a', name: 'Project A', path: '/tmp/proj-a' });
+  test('creates title without issue number when not provided', async () => {
+    const mockGetPRState = mock(() => Promise.resolve('OPEN' as const));
+    mock.module('../src/scheduler/worktree.ts', () => {
+      const actual = require('../src/scheduler/worktree.ts');
+      return { ...actual, getPRState: mockGetPRState };
+    });
+    const { createMergeFixWorkItem: createFn } = await import('../src/scheduler/merge-fix.ts');
 
-    const itemId = createMergeFixWorkItem(ctx.bb, {
+    registerProject(ctx.bb.db, { id: 'proj-a', name: 'Project A', path: '/tmp/proj-a' });
+    const project = ctx.bb.getProject('proj-a')!;
+
+    const itemId = await createFn(ctx.bb, project, {
       originalItemId: 'item-1',
       prNumber: 5,
       prUrl: 'https://example.com/pull/5',
@@ -134,10 +153,18 @@ describe('createMergeFixWorkItem', () => {
     expect(mergeFixItem!.title).toBe('Fix merge conflict: PR #5');
   });
 
-  test('logs event linking merge-fix to original item', () => {
-    registerProject(ctx.bb.db, { id: 'proj-a', name: 'Project A', path: '/tmp/proj-a' });
+  test('logs event linking merge-fix to original item', async () => {
+    const mockGetPRState = mock(() => Promise.resolve('OPEN' as const));
+    mock.module('../src/scheduler/worktree.ts', () => {
+      const actual = require('../src/scheduler/worktree.ts');
+      return { ...actual, getPRState: mockGetPRState };
+    });
+    const { createMergeFixWorkItem: createFn } = await import('../src/scheduler/merge-fix.ts');
 
-    createMergeFixWorkItem(ctx.bb, {
+    registerProject(ctx.bb.db, { id: 'proj-a', name: 'Project A', path: '/tmp/proj-a' });
+    const project = ctx.bb.getProject('proj-a')!;
+
+    await createFn(ctx.bb, project, {
       originalItemId: 'gh-repo-10',
       prNumber: 42,
       prUrl: 'https://github.com/owner/repo/pull/42',
@@ -156,10 +183,18 @@ describe('createMergeFixWorkItem', () => {
     expect(createEvent!.summary).toContain('PR #42');
   });
 
-  test('description includes PR URL and branch info', () => {
-    registerProject(ctx.bb.db, { id: 'proj-a', name: 'Project A', path: '/tmp/proj-a' });
+  test('description includes PR URL and branch info', async () => {
+    const mockGetPRState = mock(() => Promise.resolve('OPEN' as const));
+    mock.module('../src/scheduler/worktree.ts', () => {
+      const actual = require('../src/scheduler/worktree.ts');
+      return { ...actual, getPRState: mockGetPRState };
+    });
+    const { createMergeFixWorkItem: createFn } = await import('../src/scheduler/merge-fix.ts');
 
-    const itemId = createMergeFixWorkItem(ctx.bb, {
+    registerProject(ctx.bb.db, { id: 'proj-a', name: 'Project A', path: '/tmp/proj-a' });
+    const project = ctx.bb.getProject('proj-a')!;
+
+    const itemId = await createFn(ctx.bb, project, {
       originalItemId: 'item-1',
       prNumber: 7,
       prUrl: 'https://github.com/owner/repo/pull/7',
@@ -176,6 +211,94 @@ describe('createMergeFixWorkItem', () => {
     expect(mergeFixItem!.description).toContain('fix/issue-5');
     expect(mergeFixItem!.description).toContain('main');
     expect(mergeFixItem!.description).toContain('Add feature X');
+  });
+
+  test('returns null when PR is already merged', async () => {
+    const mockGetPRState = mock(() => Promise.resolve('MERGED' as const));
+    mock.module('../src/scheduler/worktree.ts', () => {
+      const actual = require('../src/scheduler/worktree.ts');
+      return { ...actual, getPRState: mockGetPRState };
+    });
+    const { createMergeFixWorkItem: createFn } = await import('../src/scheduler/merge-fix.ts');
+
+    registerProject(ctx.bb.db, { id: 'proj-a', name: 'Project A', path: '/tmp/proj-a' });
+    const project = ctx.bb.getProject('proj-a')!;
+
+    const itemId = await createFn(ctx.bb, project, {
+      originalItemId: 'gh-repo-10',
+      prNumber: 42,
+      prUrl: 'https://github.com/owner/repo/pull/42',
+      branch: 'fix/issue-10',
+      mainBranch: 'main',
+      issueNumber: 10,
+      projectId: 'proj-a',
+      originalTitle: 'Fix the bug',
+      sessionId: 'session-1',
+    });
+
+    expect(itemId).toBeNull();
+
+    // Verify no work item was created
+    const items = ctx.bb.listWorkItems();
+    expect(items.length).toBe(0);
+
+    // Verify skip event was logged
+    const events = ctx.bb.eventQueries.getRecent(10);
+    const skipEvent = events.find((e) => e.summary.includes('already merged'));
+    expect(skipEvent).toBeDefined();
+    expect(skipEvent!.summary).toContain('PR #42');
+  });
+
+  test('returns existing item ID when duplicate detected', async () => {
+    const mockGetPRState = mock(() => Promise.resolve('OPEN' as const));
+    mock.module('../src/scheduler/worktree.ts', () => {
+      const actual = require('../src/scheduler/worktree.ts');
+      return { ...actual, getPRState: mockGetPRState };
+    });
+    const { createMergeFixWorkItem: createFn } = await import('../src/scheduler/merge-fix.ts');
+
+    registerProject(ctx.bb.db, { id: 'proj-a', name: 'Project A', path: '/tmp/proj-a' });
+    const project = ctx.bb.getProject('proj-a')!;
+
+    // Create first item
+    const firstId = await createFn(ctx.bb, project, {
+      originalItemId: 'gh-repo-10',
+      prNumber: 42,
+      prUrl: 'https://github.com/owner/repo/pull/42',
+      branch: 'fix/issue-10',
+      mainBranch: 'main',
+      issueNumber: 10,
+      projectId: 'proj-a',
+      originalTitle: 'Fix the bug',
+      sessionId: 'session-1',
+    });
+    expect(firstId).toBe('merge-fix-gh-repo-10-42');
+
+    // Attempt to create duplicate
+    const secondId = await createFn(ctx.bb, project, {
+      originalItemId: 'gh-repo-10',
+      prNumber: 42,
+      prUrl: 'https://github.com/owner/repo/pull/42',
+      branch: 'fix/issue-10',
+      mainBranch: 'main',
+      issueNumber: 10,
+      projectId: 'proj-a',
+      originalTitle: 'Fix the bug',
+      sessionId: 'session-2',
+    });
+
+    // Should return existing ID, not null
+    expect(secondId).toBe('merge-fix-gh-repo-10-42');
+
+    // Verify only one work item exists
+    const items = ctx.bb.listWorkItems();
+    expect(items.length).toBe(1);
+
+    // Verify skip event was logged
+    const events = ctx.bb.eventQueries.getRecent(10);
+    const skipEvent = events.find((e) => e.summary.includes('already exists'));
+    expect(skipEvent).toBeDefined();
+    expect(skipEvent!.summary).toContain('PR #42');
   });
 });
 
