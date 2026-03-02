@@ -17,6 +17,53 @@ interface ReviewContext {
 }
 
 /**
+ * Metadata shape for code review work items.
+ * Contains PR information and blocking issues from prior review cycles.
+ */
+export interface ReviewMetadata {
+  pr_number: number;
+  pr_url?: string;
+  repo: string;
+  branch: string;
+  main_branch?: string;
+  implementation_work_item_id?: string;
+  rework_cycle?: number;
+  worktree_path?: string;
+  review_status?: string | null;
+  blocking_issues?: BlockingIssue[];
+}
+
+/**
+ * Parse work item metadata to extract review fields.
+ * Returns null if the metadata does not represent a review item.
+ */
+export function parseReviewMeta(metadata: string | null): ReviewMetadata | null {
+  if (!metadata) return null;
+  try {
+    const parsed = JSON.parse(metadata);
+    // A review item must have at minimum: pr_number and repo
+    // source='code_review' is the primary indicator, but we check required fields
+    if (parsed.pr_number && parsed.repo) {
+      return {
+        pr_number: parsed.pr_number,
+        pr_url: parsed.pr_url,
+        repo: parsed.repo,
+        branch: parsed.branch ?? '',
+        main_branch: parsed.main_branch,
+        implementation_work_item_id: parsed.implementation_work_item_id,
+        rework_cycle: typeof parsed.rework_cycle === 'number' ? parsed.rework_cycle : undefined,
+        worktree_path: parsed.worktree_path,
+        review_status: parsed.review_status !== undefined ? parsed.review_status : undefined,
+        blocking_issues: Array.isArray(parsed.blocking_issues) ? parsed.blocking_issues : undefined,
+      };
+    }
+  } catch {
+    // Invalid metadata JSON
+  }
+  return null;
+}
+
+/**
  * Build the review agent prompt.
  * The agent reviews a PR against its spec/plan using 6 dimensions.
  */
