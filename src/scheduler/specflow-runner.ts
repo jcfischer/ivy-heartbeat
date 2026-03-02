@@ -1306,7 +1306,14 @@ async function handleCompletePhase(
   // If the implement phase produced no code, only .specify/ and CHANGELOG files
   // will be in the diff — don't create a PR for spec-only changes.
   const changedFiles = await worktreeOps.getChangedFiles(worktreePath, mainBranch);
-  const sourceFiles = changedFiles.filter(f => !f.startsWith('.specify/') && f !== 'CHANGELOG.md');
+  const sourceFiles = changedFiles.filter(f =>
+    !f.startsWith('.specify/') &&
+    !f.startsWith('Plans/') &&
+    !f.startsWith('docs/') &&
+    !f.startsWith('.claude/') &&
+    f !== 'CHANGELOG.md' &&
+    f !== 'README.md'
+  );
   if (sourceFiles.length === 0) {
     bb.appendEvent({
       actorId: sessionId,
