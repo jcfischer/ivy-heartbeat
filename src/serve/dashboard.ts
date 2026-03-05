@@ -38,6 +38,9 @@ export function generateDashboardHTML(): string {
 <h2>SpecFlow Pipeline</h2>
 <div id="specflow-pipeline"><p style="color:#555;font-style:italic">Loading...</p></div>
 
+<h2>Active Agents</h2>
+<div id="agents"><p style="color:#555;font-style:italic">Loading...</p></div>
+
 <h2>Search Events</h2>
 <div class="search-box">
   <input type="text" id="search-input" placeholder="Search events..." onkeyup="if(event.key==='Enter')doSearch()">
@@ -117,7 +120,15 @@ async function loadSpecFlow() {
   }
 }
 
-function refresh() { loadSummary(); loadEvents(); loadHeartbeats(); loadSpecFlow(); }
+async function loadAgents() {
+  const agents = await fetchJSON('/api/agents');
+  const el = document.getElementById('agents');
+  if (!agents.length) { el.innerHTML = '<p style="color:#555">No active agents.</p>'; return; }
+  el.innerHTML = '<table><tr><th>Name</th><th>Status</th><th>Project</th><th>Work</th><th>Last seen</th></tr>' +
+    agents.map(a => \`<tr><td>\${a.agent_name}</td><td class="\${a.status==='active'?'ok':a.status==='idle'?'alert':''}">\${a.status}</td><td>\${a.project||'-'}</td><td>\${(a.current_work||'-').slice(0,50)}</td><td>\${relTime(a.last_seen_at)}</td></tr>\`).join('') + '</table>';
+}
+
+function refresh() { loadSummary(); loadAgents(); loadEvents(); loadHeartbeats(); loadSpecFlow(); }
 refresh();
 setInterval(refresh, 30000);
 </script>

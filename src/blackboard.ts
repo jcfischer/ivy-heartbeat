@@ -8,11 +8,13 @@ import {
   registerAgent,
   sendHeartbeat,
   deregisterAgent,
+  listAgents,
   type RegisterAgentOptions,
   type RegisterAgentResult,
   type HeartbeatOptions,
   type HeartbeatResult,
   type DeregisterAgentResult,
+  type ListAgentsOptions,
 } from 'ivy-blackboard/src/agent';
 import {
   createWorkItem,
@@ -36,7 +38,7 @@ import {
   type UpdateWorkItemMetadataResult,
 } from 'ivy-blackboard/src/work';
 import { listProjects, type ProjectWithCounts } from 'ivy-blackboard/src/project';
-import type { BlackboardProject, BlackboardWorkItem, SpecFlowFeature } from 'ivy-blackboard/src/types';
+import type { BlackboardAgent, BlackboardProject, BlackboardWorkItem, SpecFlowFeature } from 'ivy-blackboard/src/types';
 import {
   createFeature,
   getFeature,
@@ -82,6 +84,10 @@ export class Blackboard {
 
   deregisterAgent(sessionId: string): DeregisterAgentResult {
     return deregisterAgent(this.db, sessionId);
+  }
+
+  listAgents(opts?: ListAgentsOptions): BlackboardAgent[] {
+    return listAgents(this.db, opts);
   }
 
   // ─── Work items (delegated to ivy-blackboard) ───────────────────────────

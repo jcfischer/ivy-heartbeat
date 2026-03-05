@@ -83,6 +83,12 @@ export function startServer(bb: Blackboard, opts: Partial<ServerOptions> = {}) {
           }
         }
 
+        // API: Agents
+        if (path === '/api/agents') {
+          const agents = bb.listAgents();
+          return Response.json(agents, { headers });
+        }
+
         // API: Search
         if (path === '/api/search') {
           const query = url.searchParams.get('q') ?? '';
