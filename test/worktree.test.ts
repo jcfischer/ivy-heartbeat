@@ -67,9 +67,16 @@ describe('isCleanBranch', () => {
     expect(await isCleanBranch(repoDir)).toBe(true);
   });
 
-  test('returns false with uncommitted changes', async () => {
-    writeFileSync(join(repoDir, 'dirty.txt'), 'uncommitted');
+  test('returns false with modified tracked file', async () => {
+    // Modify an existing tracked file — this needs stashing
+    writeFileSync(join(repoDir, 'README.md'), 'modified content');
     expect(await isCleanBranch(repoDir)).toBe(false);
+  });
+
+  test('returns true with only untracked files', async () => {
+    // Untracked files don't need stashing — stashIfDirty skips them
+    writeFileSync(join(repoDir, 'untracked.txt'), 'untracked');
+    expect(await isCleanBranch(repoDir)).toBe(true);
   });
 
   test('returns false with staged but uncommitted changes', async () => {

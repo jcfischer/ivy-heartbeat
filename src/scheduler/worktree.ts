@@ -167,7 +167,11 @@ export function resolveWorktreePath(projectPath: string, branch: string, project
  */
 export async function isCleanBranch(projectPath: string): Promise<boolean> {
   const status = await git(['status', '--porcelain'], projectPath);
-  return status.length === 0;
+  if (!status) return true;
+  // Untracked files (??) don't need stashing and can't cause stash conflicts.
+  // Only tracked changes (modified, staged, deleted, unmerged) need stashing.
+  const trackedChanges = status.split('\n').filter(line => line && !line.startsWith('??'));
+  return trackedChanges.length === 0;
 }
 
 /**
@@ -213,6 +217,14 @@ export async function cleanupSpecArtifacts(projectPath: string): Promise<boolean
 export async function stashIfDirty(projectPath: string): Promise<boolean> {
   const clean = await isCleanBranch(projectPath);
   if (clean) return false;
+
+  // Check for unresolved merge conflicts before attempting stash.
+  // git stash push returns exit 1 with empty stderr when unmerged files exist.
+  const status = await git(['status', '--porcelain'], projectPath);
+  const hasUnmerged = status.split('\n').some(line => line.startsWith('UU') || line.startsWith('AA') || line.startsWith('DD'));
+  if (hasUnmerged) {
+    throw new Error(`Cannot stash: repository at ${projectPath} has unresolved merge conflicts. Resolve conflicts manually before retrying.`);
+  }
 
   await git(['stash', 'push', '-m', 'ivy-heartbeat: auto-stash before worktree'], projectPath);
   return true;
@@ -272,6 +284,16 @@ export async function createWorktree(
     }
   }
 
+  // Prune stale worktree entries before branch operations.
+  // After a worktree directory is physically removed, git may still track the
+  // branch as "checked out" there, preventing both deletion and re-checkout.
+  // Pruning clears these stale references so the branch can be reused.
+  try {
+    await git(['worktree', 'prune'], projectPath);
+  } catch {
+    // Non-fatal
+  }
+
   if (!reviewCycleActive) {
     // Delete local branch if it exists
     try {
@@ -297,12 +319,14 @@ export async function createWorktree(
 
   // Create worktree with new branch (reuse existing branch if review cycle is active)
   if (reviewCycleActive) {
-    // Branch exists — create worktree using existing branch (no -b flag)
+    // Branch exists — create worktree using existing branch (no -b flag).
+    // Prune above should have cleared any stale "checked out" tracking;
+    // --force handles any residual case.
     try {
-      await git(['worktree', 'add', worktreePath, branch], projectPath);
+      await git(['worktree', 'add', '--force', worktreePath, branch], projectPath);
     } catch {
-      // Branch may not exist after all — create new
-      await git(['worktree', 'add', '-b', branch, worktreePath], projectPath);
+      // Branch may not exist locally yet (only on remote) — create tracking branch
+      await git(['worktree', 'add', '-b', branch, worktreePath, `origin/${branch}`], projectPath);
     }
   } else {
     await git(['worktree', 'add', '-b', branch, worktreePath], projectPath);
@@ -364,12 +388,22 @@ export async function ensureWorktree(
   const { dirname } = await import('node:path');
   mkdirSync(dirname(worktreePath), { recursive: true });
 
-  // Try to create with existing branch first (may exist from prior phase)
+  // Prune stale worktree entries so the branch isn't reported as "checked out"
+  // in a now-deleted worktree directory. Without this, worktree add and branch -D
+  // both fail even when the physical directory is gone.
   try {
-    await git(['worktree', 'add', worktreePath, branch], projectPath);
+    await git(['worktree', 'prune'], projectPath);
+  } catch {
+    // Non-fatal
+  }
+
+  // Try to create with existing branch first (may exist from prior phase).
+  // --force handles any residual stale tracking after the prune above.
+  try {
+    await git(['worktree', 'add', '--force', worktreePath, branch], projectPath);
     return worktreePath;
   } catch {
-    // Branch may not exist — create new
+    // Branch may not exist locally — create new
   }
 
   await git(['worktree', 'add', '-b', branch, worktreePath], projectPath);
