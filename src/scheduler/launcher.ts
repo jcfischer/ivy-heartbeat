@@ -2,6 +2,20 @@ import { mkdirSync, appendFileSync } from 'node:fs';
 import type { LaunchOptions, LaunchResult, SessionLauncher } from './types.ts';
 
 /**
+ * Resolve the binary + entry-point args for spawning a worker subprocess.
+ * Works for both compiled binary and bun-from-source invocations.
+ */
+export function resolveWorkerBinary(): string[] {
+  const ep = process.execPath;
+  if (ep && !ep.endsWith('/bun') && !ep.endsWith('/node')) {
+    return [ep];
+  }
+  // Running from source: bun run src/cli.ts
+  const cliPath = new URL('../../cli.ts', import.meta.url).pathname;
+  return ['bun', 'run', cliPath];
+}
+
+/**
  * Resolve the log directory for dispatch agent logs.
  */
 export function resolveLogDir(): string {

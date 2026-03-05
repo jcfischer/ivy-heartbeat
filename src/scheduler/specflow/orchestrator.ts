@@ -1,5 +1,6 @@
 import { join, dirname, relative } from 'node:path';
-import { existsSync, mkdirSync, symlinkSync, lstatSync, readdirSync, copyFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, symlinkSync, lstatSync, readdirSync, copyFileSync, statSync, openSync, closeSync } from 'node:fs';
+import { resolveWorkerBinary, resolveLogDir, logPathForSession } from '../launcher.ts';
 import { Database as SpecflowDb } from 'bun:sqlite';
 import type { Blackboard } from '../../blackboard.ts';
 import type { SpecFlowFeature } from 'ivy-blackboard/src/types';
@@ -372,6 +373,11 @@ async function checkGateAndAdvance(
 
 /**
  * Run the appropriate phase executor for a feature.
+ *
+ * Fire-and-forget: sets up the worktree, marks the feature active, spawns
+ * a detached `specflow-phase-worker` subprocess, and returns immediately.
+ * The worker updates the feature status when it finishes. The orchestrator
+ * sees `active` on the next cycle and waits (or releases on stale timeout).
  */
 async function runPhase(
   feature: SpecFlowFeature,
@@ -379,8 +385,7 @@ async function runPhase(
   config: OrchestratorConfig,
   sessionId: string,
 ): Promise<{ advanced: boolean; failed: boolean; error?: string }> {
-  const executor = EXECUTORS.find(e => e.canRun(feature));
-  if (!executor) {
+  if (!EXECUTORS.find(e => e.canRun(feature))) {
     return {
       advanced: false,
       failed: true,
@@ -404,7 +409,13 @@ async function runPhase(
     return { advanced: false, failed: true, error: `Worktree setup failed: ${err}` };
   }
 
-  // Mark feature as active
+  // Per-phase timeout (ms): implementing gets up to 3h, others 20min
+  const PHASE_TIMEOUT_MAP: Record<string, number> = {
+    specifying: 20, planning: 20, tasking: 20, implementing: 180, completing: 20,
+  };
+  const phaseTimeoutMs = (PHASE_TIMEOUT_MAP[feature.phase] ?? config.phaseTimeoutMin) * 60_000;
+
+  // Mark feature as active before spawning so the orchestrator won't double-dispatch
   bb.updateFeature(feature.feature_id, {
     status: 'active',
     current_session: sessionId,
@@ -420,46 +431,36 @@ async function runPhase(
     metadata: { phase: feature.phase, worktreePath },
   });
 
-  const result = await executor.execute(feature, bb, {
-    worktreePath,
-    projectPath: project.local_path,
-    timeoutMs: config.phaseTimeoutMin * 60_000,
-    sessionId,
-    db: bb.db,
-  });
+  // Spawn the phase worker fire-and-forget
+  const dbPath = (bb.db as { filename?: string }).filename;
+  const bin = resolveWorkerBinary();
+  const args = [...bin];
+  if (dbPath) args.push('--db', dbPath);
+  args.push(
+    'specflow-phase-worker',
+    '--feature-id', feature.feature_id,
+    '--session-id', sessionId,
+    '--timeout-ms', String(phaseTimeoutMs),
+  );
 
-  if (result.status === 'succeeded') {
-    const updates: Partial<SpecFlowFeature> = { status: 'succeeded', current_session: null };
-    if (typeof result.metadata?.prNumber === 'number') updates.pr_number = result.metadata.prNumber;
-    if (typeof result.metadata?.prUrl === 'string') updates.pr_url = result.metadata.prUrl;
-    if (typeof result.metadata?.commitSha === 'string') updates.commit_sha = result.metadata.commitSha;
-    bb.updateFeature(feature.feature_id, updates);
-
-    bb.appendEvent({
-      actorId: sessionId,
-      targetId: feature.feature_id,
-      summary: `Phase "${feature.phase}" succeeded for ${feature.feature_id}`,
-      metadata: { phase: feature.phase, ...result.metadata },
+  const logDir = resolveLogDir();
+  mkdirSync(logDir, { recursive: true });
+  const logPath = logPathForSession(`phase-${feature.feature_id}-${feature.phase}`);
+  const logFd = openSync(logPath, 'a');
+  try {
+    const proc = Bun.spawn(args, {
+      cwd: worktreePath,
+      stdout: logFd,
+      stderr: logFd,
+      stdin: 'ignore',
     });
-    return { advanced: true, failed: false };
-  } else {
-    const newCount = feature.failure_count + 1;
-    bb.updateFeature(feature.feature_id, {
-      status: 'pending',
-      current_session: null,
-      failure_count: newCount,
-      last_error: result.error ?? 'Unknown error',
-      last_phase_error: result.error ?? 'Unknown error',
-    });
-
-    bb.appendEvent({
-      actorId: sessionId,
-      targetId: feature.feature_id,
-      summary: `Phase "${feature.phase}" failed for ${feature.feature_id} (attempt ${newCount}/${feature.max_failures})`,
-      metadata: { phase: feature.phase, error: result.error },
-    });
-    return { advanced: false, failed: true, error: result.error };
+    proc.unref();
+  } finally {
+    closeSync(logFd);
   }
+
+  // Return immediately — worker will update the DB when done
+  return { advanced: false, failed: false };
 }
 
 /**
