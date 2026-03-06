@@ -317,11 +317,17 @@ async function checkGateAndAdvance(
   const mainBranch = feature.main_branch ?? 'main';
   const worktreePath = feature.worktree_path ?? '';
 
+  // Quality gates run specflow eval (which invokes Claude CLI). Claude CLI fails
+  // with status null when invoked from inside a git worktree. Spec artifacts live
+  // in the main repo (.specify/specs/), so run the gate from there instead.
+  const project = bb.getProject(feature.project_id);
+  const qualityGatePath = project?.local_path ?? worktreePath;
+
   let passed = true;
   let gateDetails = 'auto-pass';
 
   if (gate === 'quality') {
-    const qr = await checkQualityGate(worktreePath, feature.phase, feature.feature_id);
+    const qr = await checkQualityGate(qualityGatePath, feature.phase, feature.feature_id);
     passed = qr.passed;
     gateDetails = `score ${qr.score ?? 'n/a'}`;
     if (!passed) gateDetails += ' (below threshold)';
