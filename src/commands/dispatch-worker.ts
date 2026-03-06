@@ -11,9 +11,6 @@ import {
   commitAll,
   pushBranch,
   createPR,
-  mergePR,
-  pullMain,
-  getPRState,
   getDiffSummary,
   buildCommentPrompt,
   setReviewCycleAccessor,
@@ -330,21 +327,6 @@ supertag trash <nodeId>
 `;
 
 /**
- * Handle work item failure by recording the failure and releasing the item.
- * Both operations are best-effort; failures are silently ignored to prevent
- * cascading errors during error recovery.
- */
-function handleWorkItemFailure(
-  bb: any,
-  itemId: string,
-  sessionId: string,
-  reason: string
-): void {
-  try { bb.failWorkItem(itemId, reason); } catch { /* best effort */ }
-  try { bb.releaseWorkItem(itemId, sessionId); } catch { /* item may be quarantined — best effort */ }
-}
-
-/**
  * Build the prompt for a Claude Code session working on a work item.
  * No git instructions — the dispatch worker handles all git operations.
  */
@@ -533,7 +515,8 @@ export function registerDispatchWorkerCommand(
           bb.completeWorkItem(itemId, sessionId);
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
-          handleWorkItemFailure(bb, itemId, sessionId, `Merge-fix failed: ${msg}`);
+          try { bb.failWorkItem(itemId, `Merge-fix failed: ${msg}`); } catch { /* best effort */ }
+          try { bb.releaseWorkItem(itemId, sessionId); } catch { /* item may be quarantined — best effort */ }
           bb.appendEvent({
             actorId: sessionId,
             targetId: itemId,
@@ -572,7 +555,8 @@ export function registerDispatchWorkerCommand(
           });
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
-          handleWorkItemFailure(bb, itemId, sessionId, `Rework failed: ${msg}`);
+          try { bb.failWorkItem(itemId, `Rework failed: ${msg}`); } catch { /* best effort */ }
+          try { bb.releaseWorkItem(itemId, sessionId); } catch { /* item may be quarantined — best effort */ }
           bb.appendEvent({
             actorId: sessionId,
             targetId: itemId,
@@ -645,7 +629,8 @@ export function registerDispatchWorkerCommand(
           });
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
-          handleWorkItemFailure(bb, itemId, sessionId, `PR merge failed: ${msg}`);
+          try { bb.failWorkItem(itemId, `PR merge failed: ${msg}`); } catch { /* best effort */ }
+          try { bb.releaseWorkItem(itemId, sessionId); } catch { /* item may be quarantined — best effort */ }
           bb.appendEvent({
             actorId: sessionId,
             targetId: itemId,
@@ -776,105 +761,36 @@ export function registerDispatchWorkerCommand(
                   metadata: { prNumber: pr.number, prUrl: pr.url, commitSha: sha },
                 });
 
-                // Auto-merge for trusted contributors (non-fatal)
-                if (!ghMeta.humanReviewRequired) {
-                  try {
-                    const merged = await mergePR(worktreePath, pr.number);
-                    if (merged) {
-                      bb.appendEvent({
-                        actorId: sessionId,
-                        targetId: itemId,
-                        summary: `Auto-merged PR #${pr.number} (squash) for "${item.title}"`,
-                        metadata: { prNumber: pr.number, autoMerge: true },
-                      });
-
-                      // Pull merged changes into main repo
-                      try {
-                        await pullMain(project.local_path, mainBranch);
-                        bb.appendEvent({
-                          actorId: sessionId,
-                          targetId: itemId,
-                          summary: `Pulled merged changes into ${project.local_path}`,
-                          metadata: { mainBranch, pullAfterMerge: true },
-                        });
-                      } catch (pullErr: unknown) {
-                        const pullMsg = pullErr instanceof Error ? pullErr.message : String(pullErr);
-                        bb.appendEvent({
-                          actorId: sessionId,
-                          targetId: itemId,
-                          summary: `Pull after merge failed (non-fatal): ${pullMsg}`,
-                          metadata: { error: pullMsg },
-                        });
-                      }
-                    } else {
-                      // Check if PR was merged by another path before creating recovery item
-                      const currentState = await getPRState(worktreePath, pr.number);
-                      if (currentState === 'MERGED') {
-                        try { await pullMain(project.local_path, mainBranch!); } catch { /* non-fatal */ }
-                        bb.appendEvent({
-                          actorId: sessionId,
-                          targetId: itemId,
-                          summary: `PR #${pr.number} already merged — skipping merge-fix`,
-                          metadata: { prNumber: pr.number, prState: 'MERGED' },
-                        });
-                      } else {
-                        // Create recovery work item for merge failure
-                        const mergeFixId = await createMergeFixWorkItem(bb, project, {
-                          originalItemId: itemId,
-                          prNumber: pr.number,
-                          prUrl: pr.url,
-                          branch: branch!,
-                          mainBranch: mainBranch!,
-                          issueNumber: ghMeta.issueNumber,
-                          projectId: item.project_id!,
-                          originalTitle: item.title,
-                          sessionId,
-                        });
-                        if (mergeFixId) {
-                          bb.appendEvent({
-                            actorId: sessionId,
-                            targetId: itemId,
-                            summary: `Auto-merge failed for PR #${pr.number} — created recovery item ${mergeFixId}`,
-                            metadata: { prNumber: pr.number, autoMerge: false, mergeFixItemId: mergeFixId },
-                          });
-                        }
-                      }
-                    }
-                  } catch (mergeErr: unknown) {
-                    const mergeMsg = mergeErr instanceof Error ? mergeErr.message : String(mergeErr);
-                    // Check if PR was merged despite the error before creating recovery item
-                    const errState = await getPRState(worktreePath, pr.number);
-                    if (errState === 'MERGED') {
-                      try { await pullMain(project.local_path, mainBranch!); } catch { /* non-fatal */ }
-                      bb.appendEvent({
-                        actorId: sessionId,
-                        targetId: itemId,
-                        summary: `PR #${pr.number} already merged — skipping merge-fix (error was: ${mergeMsg})`,
-                        metadata: { prNumber: pr.number, prState: 'MERGED', error: mergeMsg },
-                      });
-                    } else {
-                      // Create recovery work item for merge error
-                      const mergeFixId = await createMergeFixWorkItem(bb, project, {
-                        originalItemId: itemId,
-                        prNumber: pr.number,
-                        prUrl: pr.url,
-                        branch: branch!,
-                        mainBranch: mainBranch!,
-                        issueNumber: ghMeta.issueNumber,
-                        projectId: item.project_id!,
-                        originalTitle: item.title,
-                        sessionId,
-                      });
-                      if (mergeFixId) {
-                        bb.appendEvent({
-                          actorId: sessionId,
-                          targetId: itemId,
-                          summary: `Auto-merge error for PR #${pr.number}: ${mergeMsg} — created recovery item ${mergeFixId}`,
-                          metadata: { prNumber: pr.number, error: mergeMsg, mergeFixItemId: mergeFixId },
-                        });
-                      }
-                    }
-                  }
+                // Create code review work item — all PRs go through review, no auto-merge
+                const reviewItemId = `review-${item.project_id}-pr-${pr.number}`;
+                try {
+                  bb.createWorkItem({
+                    id: reviewItemId,
+                    title: `Code review: PR #${pr.number} - ${item.title}`,
+                    description: `AI code review for PR #${pr.number}\nBranch: ${branch}\nRepo: ${ghMeta.repo}`,
+                    project: item.project_id ?? undefined,
+                    source: 'code_review',
+                    sourceRef: pr.url,
+                    priority: 'P1',
+                    metadata: JSON.stringify({
+                      pr_number: pr.number,
+                      pr_url: pr.url,
+                      repo: ghMeta.repo,
+                      branch,
+                      main_branch: mainBranch,
+                      implementation_work_item_id: itemId,
+                      worktree_path: worktreePath,
+                      review_status: null,
+                    }),
+                  });
+                  bb.appendEvent({
+                    actorId: sessionId,
+                    targetId: itemId,
+                    summary: `Created code review work item ${reviewItemId} for PR #${pr.number}`,
+                    metadata: { reviewItemId, prNumber: pr.number },
+                  });
+                } catch {
+                  // Review item creation failed (non-fatal)
                 }
 
                 // Launch commenter agent to post on the issue (non-fatal)
@@ -1031,7 +947,8 @@ export function registerDispatchWorkerCommand(
             }
           }
 
-          handleWorkItemFailure(bb, itemId, sessionId, `Agent exited with code ${result.exitCode}`);
+          try { bb.failWorkItem(itemId, `Agent exited with code ${result.exitCode}`); } catch { /* best effort */ }
+          try { bb.releaseWorkItem(itemId, sessionId); } catch { /* item may be quarantined — best effort */ }
           bb.appendEvent({
             actorId: sessionId,
             targetId: itemId,
@@ -1048,7 +965,8 @@ export function registerDispatchWorkerCommand(
         const msg = err instanceof Error ? err.message : String(err);
         const durationMs = Date.now() - startTime;
 
-        handleWorkItemFailure(bb, itemId, sessionId, msg);
+        try { bb.failWorkItem(itemId, msg); } catch { /* best effort */ }
+        try { bb.releaseWorkItem(itemId, sessionId); } catch { /* item may be quarantined — best effort */ }
 
         bb.appendEvent({
           actorId: sessionId,
