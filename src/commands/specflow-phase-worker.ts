@@ -84,6 +84,46 @@ export function registerSpecFlowPhaseWorkerCommand(
         process.exit(1);
       }
 
+      // Ensure the feature exists in the project's local specflow DB.
+      // The orchestrator only writes to the central blackboard; the specflow CLI
+      // (specflow plan, specflow specify, etc.) looks up features in the
+      // project-local .specflow/features.db. If missing there, phase commands
+      // exit 1 with "Feature <id> not found".
+      try {
+        const statusProc = Bun.spawn(['specflow', 'status', '--json', featureId], {
+          cwd: worktreePath,
+          stdout: 'pipe',
+          stderr: 'pipe',
+        });
+        const statusOut = await new Response(statusProc.stdout).text();
+        await statusProc.exited;
+
+        let existsLocally = false;
+        if (statusProc.exitCode === 0) {
+          try {
+            const data = JSON.parse(statusOut);
+            const list = Array.isArray(data) ? data : (data.features ?? []);
+            existsLocally = list.some(
+              (f: { id?: string; feature_id?: string }) =>
+                f.id === featureId || f.feature_id === featureId
+            );
+          } catch { /* non-JSON output → treat as not found */ }
+        }
+
+        if (!existsLocally) {
+          const name = featureId.replace(/^f-\d+-/, '').replace(/-/g, ' ');
+          const addProc = Bun.spawn(
+            ['specflow', 'add', '--id', featureId, name, `Feature ${featureId} (queued via blackboard)`],
+            { cwd: worktreePath, stdout: 'pipe', stderr: 'pipe' },
+          );
+          await addProc.exited;
+          console.error(`[specflow-phase-worker] Created local specflow entry for ${featureId} (exit ${addProc.exitCode})`);
+        }
+      } catch (syncErr) {
+        // Non-fatal — the executor will surface the error if specflow still can't find the feature
+        console.error(`[specflow-phase-worker] Warning: local-DB sync for ${featureId} failed: ${syncErr}`);
+      }
+
       bb.appendEvent({
         actorId: sessionId,
         targetId: featureId,

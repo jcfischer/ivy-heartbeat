@@ -4,6 +4,7 @@ import type { Blackboard } from '../../../blackboard.ts';
 import type { PhaseExecutor, PhaseExecutorOptions, PhaseResult, SpecFlowFeature } from '../types.ts';
 import { runSpecflowCli } from '../infra/specflow-cli.ts';
 import { getLauncher } from '../../launcher.ts';
+import { resolveFeatureDirWithFallback } from '../utils/find-feature-dir.ts';
 
 const SPECFLOW_TIMEOUT_MS = 30 * 60 * 1000;
 
@@ -55,10 +56,26 @@ export abstract class BasePhaseExecutor implements PhaseExecutor {
       };
     }
 
-    // If artifact already exists, advance DB and return success
+    // No prompt file written — specflow CLI considered the phase already done.
+    // Verify the artifact actually exists before trusting that assumption.
     if (!existsSync(promptFile)) {
-      await runSpecflowCli(['phase', featureId, this.phaseName], worktreePath, 10_000);
-      return { status: 'succeeded', artifacts: [this.artifactName] };
+      const featureDir = resolveFeatureDirWithFallback(worktreePath, featureId);
+      const artifactPath = featureDir ? join(featureDir, this.artifactName) : null;
+
+      if (artifactPath && existsSync(artifactPath)) {
+        // Artifact is genuinely present — advance DB and return success
+        await runSpecflowCli(['phase', featureId, this.phaseName], worktreePath, 10_000);
+        return { status: 'succeeded', artifacts: [this.artifactName] };
+      }
+
+      // Artifact is missing despite specflow exiting cleanly. This happens when the
+      // worktree's .specflow/features.db phase is already advanced (e.g. from manual
+      // registration) but the artifact was never written. Fail so the orchestrator
+      // retries and the phase runs properly.
+      return {
+        status: 'failed',
+        error: `specflow ${this.phaseName} exited 0 but ${this.artifactName} is missing — worktree DB phase may be ahead of artifacts`,
+      };
     }
 
     // Step 2: Parse the prompt file

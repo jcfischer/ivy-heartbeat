@@ -31,6 +31,12 @@ export interface ReviewMetadata {
   worktree_path?: string;
   review_status?: string | null;
   blocking_issues?: BlockingIssue[];
+  /**
+   * When true, the PR was created for an issue opened by someone other than
+   * the repo owner. Review still runs, but approval does NOT auto-create a
+   * merge work item — Jens-Christian must merge manually.
+   */
+  human_review_required?: boolean;
 }
 
 /**
@@ -55,6 +61,7 @@ export function parseReviewMeta(metadata: string | null): ReviewMetadata | null 
         worktree_path: parsed.worktree_path,
         review_status: parsed.review_status !== undefined ? parsed.review_status : undefined,
         blocking_issues: Array.isArray(parsed.blocking_issues) ? parsed.blocking_issues : undefined,
+        human_review_required: typeof parsed.human_review_required === 'boolean' ? parsed.human_review_required : undefined,
       };
     }
   } catch {
@@ -287,8 +294,17 @@ export function parseReviewResult(output: string): {
     }
   }
 
+  let status = (lastStatus?.[1]?.toLowerCase() as 'approved' | 'changes_requested') ?? 'unknown';
+
+  // Safety override: if the agent says "approved" but also reported critical or high
+  // blocking issues, treat it as changes_requested. This catches inconsistent agent
+  // output where the REVIEW_RESULT field contradicts the BLOCKING_ISSUES list.
+  if (status === 'approved' && blockingIssues.some(i => i.severity === 'critical' || i.severity === 'high')) {
+    status = 'changes_requested';
+  }
+
   return {
-    status: (lastStatus?.[1]?.toLowerCase() as 'approved' | 'changes_requested') ?? 'unknown',
+    status,
     findingsCount: lastCount ? parseInt(lastCount[1], 10) : 0,
     severity: lastSeverity?.[1] ?? 'unknown',
     summary: lastSummary?.[1] ?? 'No summary available',
@@ -359,8 +375,9 @@ export async function dispatchReviewAgent(
     metadata: { ...updatedMeta, eventType },
   });
 
-  // On approval: create a merge work item so the PR gets merged in the next dispatch cycle
-  if (review.status === 'approved' && existingMeta.repo && existingMeta.branch) {
+  // On approval: create a merge work item so the PR gets merged in the next dispatch cycle.
+  // Skip for non-owner issues (human_review_required === true) — those require manual merge.
+  if (review.status === 'approved' && existingMeta.repo && existingMeta.branch && !existingMeta.human_review_required) {
     try {
       createPRMergeWorkItem(bb, {
         prNumber: existingMeta.pr_number ?? ctx.prNumber,

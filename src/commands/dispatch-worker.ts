@@ -17,7 +17,7 @@ import {
 } from '../scheduler/worktree.ts';
 import { parseSpecFlowMeta, type SpecFlowPhase } from '../scheduler/specflow-types.ts';
 import { runSpecFlowPhase } from '../scheduler/specflow-runner.ts';
-import { parseMergeFixMeta, createMergeFixWorkItem, runMergeFix } from '../scheduler/merge-fix.ts';
+import { parseMergeFixMeta, runMergeFix } from '../scheduler/merge-fix.ts';
 import { parsePRMergeMeta, runPRMerge } from '../scheduler/pr-merge.ts';
 import { parseReworkMeta, runRework } from '../scheduler/rework.ts';
 import { dispatchReviewAgent, parseReviewMeta } from '../scheduler/review-agent.ts';
@@ -732,6 +732,21 @@ export function registerDispatchWorkerCommand(
         if (result.exitCode === 0) {
           // Post-agent git operations for GitHub items
           if (ghMeta.isGithub && worktreePath && branch && mainBranch) {
+            // Pop stash before pullMain: the merged PR may touch the same files
+            // as the stash. If we pop after pulling, conflicts cause a silent
+            // failure. Popping first is correct — if pull then conflicts with
+            // the user's restored changes, that is visible and expected.
+            if (didStash) {
+              const restored = await popStash(project.local_path);
+              didStash = false; // prevent double-pop in finally
+              bb.appendEvent({
+                actorId: sessionId,
+                targetId: itemId,
+                summary: restored
+                  ? `Restored stashed changes in ${project.local_path} (pre-merge)`
+                  : `Failed to restore stash in ${project.local_path} — run 'git stash pop' manually`,
+              });
+            }
             try {
               const sha = await commitAll(
                 worktreePath,
@@ -761,36 +776,40 @@ export function registerDispatchWorkerCommand(
                   metadata: { prNumber: pr.number, prUrl: pr.url, commitSha: sha },
                 });
 
-                // Create code review work item — all PRs go through review, no auto-merge
-                const reviewItemId = `review-${item.project_id}-pr-${pr.number}`;
+                // Route through PR review workflow.
+                // On approval, review-agent creates a merge work item only
+                // for owner issues (human_review_required === false).
+                // Non-owner issues require manual merge by Jens-Christian.
+                const reviewItemId = `review-${item.project_id ?? 'gh'}-pr-${pr.number}`;
                 try {
                   bb.createWorkItem({
                     id: reviewItemId,
                     title: `Code review: PR #${pr.number} - ${item.title}`,
-                    description: `AI code review for PR #${pr.number}\nBranch: ${branch}\nRepo: ${ghMeta.repo}`,
-                    project: item.project_id ?? undefined,
+                    description: `AI code review for PR #${pr.number}\nBranch: ${branch}\nRepo: ${ghMeta.repo ?? ''}`,
+                    project: item.project_id ?? '',
                     source: 'code_review',
                     sourceRef: pr.url,
                     priority: 'P1',
                     metadata: JSON.stringify({
                       pr_number: pr.number,
                       pr_url: pr.url,
-                      repo: ghMeta.repo,
-                      branch,
-                      main_branch: mainBranch,
+                      repo: ghMeta.repo ?? '',
+                      branch: branch!,
+                      main_branch: mainBranch!,
                       implementation_work_item_id: itemId,
                       worktree_path: worktreePath,
                       review_status: null,
+                      human_review_required: ghMeta.humanReviewRequired ?? true,
                     }),
                   });
                   bb.appendEvent({
                     actorId: sessionId,
                     targetId: itemId,
-                    summary: `Created code review work item ${reviewItemId} for PR #${pr.number}`,
-                    metadata: { reviewItemId, prNumber: pr.number },
+                    summary: `Created code review work item for PR #${pr.number}${ghMeta.humanReviewRequired ? ' (manual merge required — non-owner issue)' : ''}`,
+                    metadata: { reviewItemId, prNumber: pr.number, humanReviewRequired: ghMeta.humanReviewRequired },
                   });
                 } catch {
-                  // Review item creation failed (non-fatal)
+                  // Non-fatal — PR can be reviewed and merged manually
                 }
 
                 // Launch commenter agent to post on the issue (non-fatal)
