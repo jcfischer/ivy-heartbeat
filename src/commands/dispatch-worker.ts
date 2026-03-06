@@ -11,16 +11,14 @@ import {
   commitAll,
   pushBranch,
   createPR,
-  mergePR,
   pullMain,
-  getPRState,
   getDiffSummary,
   buildCommentPrompt,
   setReviewCycleAccessor,
 } from '../scheduler/worktree.ts';
 import { parseSpecFlowMeta, type SpecFlowPhase } from '../scheduler/specflow-types.ts';
 import { runSpecFlowPhase } from '../scheduler/specflow-runner.ts';
-import { parseMergeFixMeta, createMergeFixWorkItem, runMergeFix } from '../scheduler/merge-fix.ts';
+import { parseMergeFixMeta, runMergeFix } from '../scheduler/merge-fix.ts';
 import { parsePRMergeMeta, runPRMerge } from '../scheduler/pr-merge.ts';
 import { parseReworkMeta, runRework } from '../scheduler/rework.ts';
 import { dispatchReviewAgent, parseReviewMeta } from '../scheduler/review-agent.ts';
@@ -732,6 +730,21 @@ export function registerDispatchWorkerCommand(
         if (result.exitCode === 0) {
           // Post-agent git operations for GitHub items
           if (ghMeta.isGithub && worktreePath && branch && mainBranch) {
+            // Pop stash before pullMain: the merged PR may touch the same files
+            // as the stash. If we pop after pulling, conflicts cause a silent
+            // failure. Popping first is correct — if pull then conflicts with
+            // the user's restored changes, that is visible and expected.
+            if (didStash) {
+              const restored = await popStash(project.local_path);
+              didStash = false; // prevent double-pop in finally
+              bb.appendEvent({
+                actorId: sessionId,
+                targetId: itemId,
+                summary: restored
+                  ? `Restored stashed changes in ${project.local_path} (pre-merge)`
+                  : `Failed to restore stash in ${project.local_path} — run 'git stash pop' manually`,
+              });
+            }
             try {
               const sha = await commitAll(
                 worktreePath,
@@ -761,105 +774,40 @@ export function registerDispatchWorkerCommand(
                   metadata: { prNumber: pr.number, prUrl: pr.url, commitSha: sha },
                 });
 
-                // Auto-merge for trusted contributors (non-fatal)
-                if (!ghMeta.humanReviewRequired) {
-                  try {
-                    const merged = await mergePR(worktreePath, pr.number);
-                    if (merged) {
-                      bb.appendEvent({
-                        actorId: sessionId,
-                        targetId: itemId,
-                        summary: `Auto-merged PR #${pr.number} (squash) for "${item.title}"`,
-                        metadata: { prNumber: pr.number, autoMerge: true },
-                      });
-
-                      // Pull merged changes into main repo
-                      try {
-                        await pullMain(project.local_path, mainBranch);
-                        bb.appendEvent({
-                          actorId: sessionId,
-                          targetId: itemId,
-                          summary: `Pulled merged changes into ${project.local_path}`,
-                          metadata: { mainBranch, pullAfterMerge: true },
-                        });
-                      } catch (pullErr: unknown) {
-                        const pullMsg = pullErr instanceof Error ? pullErr.message : String(pullErr);
-                        bb.appendEvent({
-                          actorId: sessionId,
-                          targetId: itemId,
-                          summary: `Pull after merge failed (non-fatal): ${pullMsg}`,
-                          metadata: { error: pullMsg },
-                        });
-                      }
-                    } else {
-                      // Check if PR was merged by another path before creating recovery item
-                      const currentState = await getPRState(worktreePath, pr.number);
-                      if (currentState === 'MERGED') {
-                        try { await pullMain(project.local_path, mainBranch!); } catch { /* non-fatal */ }
-                        bb.appendEvent({
-                          actorId: sessionId,
-                          targetId: itemId,
-                          summary: `PR #${pr.number} already merged — skipping merge-fix`,
-                          metadata: { prNumber: pr.number, prState: 'MERGED' },
-                        });
-                      } else {
-                        // Create recovery work item for merge failure
-                        const mergeFixId = await createMergeFixWorkItem(bb, project, {
-                          originalItemId: itemId,
-                          prNumber: pr.number,
-                          prUrl: pr.url,
-                          branch: branch!,
-                          mainBranch: mainBranch!,
-                          issueNumber: ghMeta.issueNumber,
-                          projectId: item.project_id!,
-                          originalTitle: item.title,
-                          sessionId,
-                        });
-                        if (mergeFixId) {
-                          bb.appendEvent({
-                            actorId: sessionId,
-                            targetId: itemId,
-                            summary: `Auto-merge failed for PR #${pr.number} — created recovery item ${mergeFixId}`,
-                            metadata: { prNumber: pr.number, autoMerge: false, mergeFixItemId: mergeFixId },
-                          });
-                        }
-                      }
-                    }
-                  } catch (mergeErr: unknown) {
-                    const mergeMsg = mergeErr instanceof Error ? mergeErr.message : String(mergeErr);
-                    // Check if PR was merged despite the error before creating recovery item
-                    const errState = await getPRState(worktreePath, pr.number);
-                    if (errState === 'MERGED') {
-                      try { await pullMain(project.local_path, mainBranch!); } catch { /* non-fatal */ }
-                      bb.appendEvent({
-                        actorId: sessionId,
-                        targetId: itemId,
-                        summary: `PR #${pr.number} already merged — skipping merge-fix (error was: ${mergeMsg})`,
-                        metadata: { prNumber: pr.number, prState: 'MERGED', error: mergeMsg },
-                      });
-                    } else {
-                      // Create recovery work item for merge error
-                      const mergeFixId = await createMergeFixWorkItem(bb, project, {
-                        originalItemId: itemId,
-                        prNumber: pr.number,
-                        prUrl: pr.url,
-                        branch: branch!,
-                        mainBranch: mainBranch!,
-                        issueNumber: ghMeta.issueNumber,
-                        projectId: item.project_id!,
-                        originalTitle: item.title,
-                        sessionId,
-                      });
-                      if (mergeFixId) {
-                        bb.appendEvent({
-                          actorId: sessionId,
-                          targetId: itemId,
-                          summary: `Auto-merge error for PR #${pr.number}: ${mergeMsg} — created recovery item ${mergeFixId}`,
-                          metadata: { prNumber: pr.number, error: mergeMsg, mergeFixItemId: mergeFixId },
-                        });
-                      }
-                    }
-                  }
+                // Route through PR review workflow.
+                // On approval, review-agent creates a merge work item only
+                // for owner issues (human_review_required === false).
+                // Non-owner issues require manual merge by Jens-Christian.
+                const reviewItemId = `review-${item.project_id ?? 'gh'}-pr-${pr.number}`;
+                try {
+                  bb.createWorkItem({
+                    id: reviewItemId,
+                    title: `Code review: PR #${pr.number} - ${item.title}`,
+                    description: `AI code review for PR #${pr.number}\nBranch: ${branch}\nRepo: ${ghMeta.repo ?? ''}`,
+                    project: item.project_id ?? '',
+                    source: 'code_review',
+                    sourceRef: pr.url,
+                    priority: 'P1',
+                    metadata: JSON.stringify({
+                      pr_number: pr.number,
+                      pr_url: pr.url,
+                      repo: ghMeta.repo ?? '',
+                      branch: branch!,
+                      main_branch: mainBranch!,
+                      implementation_work_item_id: itemId,
+                      worktree_path: worktreePath,
+                      review_status: null,
+                      human_review_required: ghMeta.humanReviewRequired ?? true,
+                    }),
+                  });
+                  bb.appendEvent({
+                    actorId: sessionId,
+                    targetId: itemId,
+                    summary: `Created code review work item for PR #${pr.number}${ghMeta.humanReviewRequired ? ' (manual merge required — non-owner issue)' : ''}`,
+                    metadata: { reviewItemId, prNumber: pr.number, humanReviewRequired: ghMeta.humanReviewRequired },
+                  });
+                } catch {
+                  // Non-fatal — PR can be reviewed and merged manually
                 }
 
                 // Launch commenter agent to post on the issue (non-fatal)

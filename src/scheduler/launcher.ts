@@ -11,7 +11,7 @@ export function resolveWorkerBinary(): string[] {
     return [ep];
   }
   // Running from source: bun run src/cli.ts
-  const cliPath = new URL('../../cli.ts', import.meta.url).pathname;
+  const cliPath = new URL('../cli.ts', import.meta.url).pathname;
   return ['bun', 'run', cliPath];
 }
 
