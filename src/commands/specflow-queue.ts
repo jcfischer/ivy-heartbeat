@@ -19,12 +19,12 @@ const PHASE_ARTIFACT: Partial<Record<SpecFlowPhase, string>> = {
 function detectStartPhase(
   projectPath: string,
   featureId: string
-): { phase: SpecFlowPhase; found: string[] } {
+): { phase: SpecFlowPhase; found: string[]; featureDir: string | null } {
   const specDir = join(projectPath, '.specify', 'specs');
   const featureDir = findFeatureDir(specDir, featureId);
 
   if (!featureDir) {
-    return { phase: 'specify', found: [] };
+    return { phase: 'specify', found: [], featureDir: null };
   }
 
   const found: string[] = [];
@@ -33,11 +33,11 @@ function detectStartPhase(
   if (existsSync(join(featureDir, 'plan.md'))) found.push('plan.md');
   if (existsSync(join(featureDir, 'tasks.md'))) found.push('tasks.md');
 
-  if (found.length === 0) return { phase: 'specify', found };
-  if (!found.includes('spec.md')) return { phase: 'specify', found };
-  if (!found.includes('plan.md')) return { phase: 'plan', found };
-  if (!found.includes('tasks.md')) return { phase: 'tasks', found };
-  return { phase: 'implement', found };
+  if (found.length === 0) return { phase: 'specify', found, featureDir };
+  if (!found.includes('spec.md')) return { phase: 'specify', found, featureDir };
+  if (!found.includes('plan.md')) return { phase: 'plan', found, featureDir };
+  if (!found.includes('tasks.md')) return { phase: 'tasks', found, featureDir };
+  return { phase: 'implement', found, featureDir };
 }
 
 /**
@@ -224,10 +224,20 @@ export function registerSpecFlowQueueCommand(
               }
             }
 
-            // ─── Fix spec_path if it points to a file instead of directory ──
-            if (feature?.specPath && feature.specPath.endsWith('.md')) {
-              const dirPath = feature.specPath.replace(/\/[^/]+\.md$/, '');
-              console.log(`Fixing spec_path: ${feature.specPath} → ${dirPath}`);
+            // ─── Fix spec_path if missing or pointing to a file ──────────
+            const specPath = feature?.specPath ?? feature?.spec_path ?? null;
+            if (detected.featureDir && !specPath) {
+              // spec_path is NULL but we found the directory — set it
+              console.log(`Setting missing spec_path: ${opts.feature} → ${detected.featureDir}`);
+              const editProc = Bun.spawn(['specflow', 'edit', opts.feature, '--spec-path', detected.featureDir], {
+                cwd: project.local_path,
+                stdout: 'pipe',
+                stderr: 'pipe',
+              });
+              await editProc.exited;
+            } else if (specPath && specPath.endsWith('.md')) {
+              const dirPath = specPath.replace(/\/[^/]+\.md$/, '');
+              console.log(`Fixing spec_path: ${specPath} → ${dirPath}`);
               const editProc = Bun.spawn(['specflow', 'edit', opts.feature, '--spec-path', dirPath], {
                 cwd: project.local_path,
                 stdout: 'pipe',

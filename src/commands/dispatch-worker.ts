@@ -11,7 +11,6 @@ import {
   commitAll,
   pushBranch,
   createPR,
-  pullMain,
   getDiffSummary,
   buildCommentPrompt,
   setReviewCycleAccessor,
