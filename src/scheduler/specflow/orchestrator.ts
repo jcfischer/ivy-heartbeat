@@ -299,7 +299,12 @@ async function setupWorktree(
     worktreePath = await createWorktree(projectPath, branch, feature.project_id);
   }
   ensureSpecflowInWorktree(worktreePath, projectPath);
-  ensureSpecDirInWorktree(worktreePath, projectPath, feature.feature_id);
+  // NOTE: ensureSpecDirInWorktree was removed. It symlinked spec dirs from the
+  // main repo into the worktree, but this created broken symlinks whenever the
+  // spec dir only existed in the worktree (agents write there first). Those broken
+  // symlinks caused spec files to be silently lost across cycles. Spec agents
+  // write directly to the worktree's .specify/specs/ and files are committed to
+  // the branch — no symlinks needed.
   return worktreePath;
 }
 
@@ -317,17 +322,18 @@ async function checkGateAndAdvance(
   const mainBranch = feature.main_branch ?? 'main';
   const worktreePath = feature.worktree_path ?? '';
 
-  // Quality gates run specflow eval (which invokes Claude CLI). Claude CLI fails
-  // with status null when invoked from inside a git worktree. Spec artifacts live
-  // in the main repo (.specify/specs/), so run the gate from there instead.
+  // Spec artifacts live in the worktree (where the agent wrote them).
+  // But running specflow eval from inside a git worktree causes Claude CLI to exit
+  // with status null. Use the main project path as the CLI CWD while still finding
+  // artifacts in the worktree.
   const project = bb.getProject(feature.project_id);
-  const qualityGatePath = project?.local_path ?? worktreePath;
+  const cliCwd = project?.local_path ?? worktreePath;
 
   let passed = true;
   let gateDetails = 'auto-pass';
 
   if (gate === 'quality') {
-    const qr = await checkQualityGate(qualityGatePath, feature.phase, feature.feature_id);
+    const qr = await checkQualityGate(worktreePath, feature.phase, feature.feature_id, cliCwd);
     passed = qr.passed;
     gateDetails = `score ${qr.score ?? 'n/a'}`;
     if (!passed) gateDetails += ' (below threshold)';

@@ -26,11 +26,18 @@ export interface QualityGateResult {
 /**
  * Run the quality gate for a given phase.
  * Runs `specflow eval` on the phase artifact and checks the score.
+ *
+ * @param worktreePath - Where to look for the artifact (worktree, where agents write)
+ * @param phase - Current feature phase (e.g. 'specifying', 'planning')
+ * @param featureId - Feature ID
+ * @param cliCwd - CWD for the specflow eval CLI (defaults to worktreePath).
+ *   Pass the main project path to avoid git-worktree CWD issues with Claude CLI.
  */
 export async function checkQualityGate(
   worktreePath: string,
   phase: string,
   featureId: string,
+  cliCwd?: string,
 ): Promise<QualityGateResult> {
   const rubric = PHASE_RUBRICS[phase];
   const artifact = PHASE_ARTIFACTS[phase];
@@ -48,7 +55,7 @@ export async function checkQualityGate(
 
   const result = await runSpecflowCli(
     ['eval', 'run', '--file', artifactPath, '--rubric', rubric, '--json'],
-    worktreePath,
+    cliCwd ?? worktreePath,
     120_000,
   );
 
