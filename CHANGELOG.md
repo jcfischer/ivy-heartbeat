@@ -5,6 +5,9 @@ All notable changes to ivy-heartbeat are documented here.
 ## [Unreleased]
 
 ### Added
+- **F-028 dead-letter-queue-typed-failure-states**: The merge-fix loop (issue #41) is the canonical failure: a transient `gh pr merge` failure creates a merge-fix work item, which also fails, and the loop never terminates. The blackboard has no:
+- **F-028 dead-letter-queue-typed-failure-states**: The merge-fix loop (issue #41) is the canonical failure: a transient `gh pr merge` failure creates a merge-fix work item, which also fails, and the loop never terminates. The blackboard has no:
+- **F-028 dead-letter-queue-typed-failure-states**: The merge-fix loop (issue #41) is the canonical failure: a transient `gh pr merge` failure creates a merge-fix work item, which also fails, and the loop never terminates. The blackboard has no:
 - **F-027 SpecFlow centralized orchestrator** — new `specflow_orchestrate` evaluator drives all SpecFlow feature advancement via `specflow_features` table instead of work-item chaining; includes quality-gate and code-gate executors, `SPECFLOW_ORCHESTRATOR` feature flag, and scheduler/dispatch-worker guards that silently complete residual specflow work items when orchestrator is active
 - **F-026 Pipeline visibility dashboard**: The existing dashboard at `localhost:7878` has no SpecFlow pipeline section. PR #35 (closed) added a partial implementation that:
 - **F-023 GitLab CLI support for dispatch pipeline**: The SpecFlow dispatch pipeline (PR creation, merge, review, issue watching, rework, merge-fix) is hardcoded to the GitHub `gh` CLI. Projects hosted on GitLab cannot use the automated implement-review-merge workflow. This feature adds GitLab CLI (`glab`) support with VCS abstraction layer.

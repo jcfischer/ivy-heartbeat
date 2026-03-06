@@ -38,6 +38,9 @@ export function generateDashboardHTML(): string {
 <h2>SpecFlow Pipeline</h2>
 <div id="specflow-pipeline"><p style="color:#555;font-style:italic">Loading...</p></div>
 
+<h2>Quarantined Items</h2>
+<div id="quarantine-panel"><p style="color:#555;font-style:italic">Loading...</p></div>
+
 <h2>Active Agents</h2>
 <div id="agents"><p style="color:#555;font-style:italic">Loading...</p></div>
 
@@ -120,6 +123,18 @@ async function loadSpecFlow() {
   }
 }
 
+async function loadQuarantine() {
+  try {
+    const res = await fetch('/api/quarantine/panel');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const html = await res.text();
+    document.getElementById('quarantine-panel').innerHTML = html;
+  } catch(e) {
+    document.getElementById('quarantine-panel').innerHTML =
+      '<p style="color:#f44336">Unable to load quarantine data. Will retry.</p>';
+  }
+}
+
 async function loadAgents() {
   const agents = await fetchJSON('/api/agents');
   const el = document.getElementById('agents');
@@ -128,7 +143,7 @@ async function loadAgents() {
     agents.map(a => \`<tr><td>\${a.agent_name}</td><td class="\${a.status==='active'?'ok':a.status==='idle'?'alert':''}">\${a.status}</td><td>\${a.project||'-'}</td><td>\${(a.current_work||'-').slice(0,50)}</td><td>\${relTime(a.last_seen_at)}</td></tr>\`).join('') + '</table>';
 }
 
-function refresh() { loadSummary(); loadAgents(); loadEvents(); loadHeartbeats(); loadSpecFlow(); }
+function refresh() { loadSummary(); loadAgents(); loadEvents(); loadHeartbeats(); loadSpecFlow(); loadQuarantine(); }
 refresh();
 setInterval(refresh, 30000);
 </script>

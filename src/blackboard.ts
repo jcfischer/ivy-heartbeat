@@ -26,6 +26,10 @@ import {
   unblockWorkItem,
   setWaitingForResponse,
   updateWorkItemMetadata,
+  failWorkItem,
+  quarantineWorkItem,
+  getFailedItems,
+  requeueWorkItem,
   type CreateWorkItemOptions,
   type CreateWorkItemResult,
   type ListWorkItemsOptions,
@@ -126,6 +130,22 @@ export class Blackboard {
 
   updateWorkItemMetadata(itemId: string, updates: Record<string, unknown>): UpdateWorkItemMetadataResult {
     return updateWorkItemMetadata(this.db, itemId, updates);
+  }
+
+  failWorkItem(itemId: string, reason: string): void {
+    return failWorkItem(this.db, itemId, reason);
+  }
+
+  quarantineWorkItem(itemId: string, reason: string): void {
+    return quarantineWorkItem(this.db, itemId, reason);
+  }
+
+  getFailedItems(): BlackboardWorkItem[] {
+    return getFailedItems(this.db);
+  }
+
+  requeueWorkItem(itemId: string): void {
+    return requeueWorkItem(this.db, itemId);
   }
 
   /**
