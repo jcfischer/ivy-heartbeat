@@ -3,6 +3,7 @@ import { generateSummary } from '../observe/summary.ts';
 import { generateDashboardHTML } from './dashboard.ts';
 import { getSpecFlowFeaturesView } from './api/specflow-pipeline.ts';
 import { renderSpecFlowPanel } from './views/specflow-panel.ts';
+import { renderQuarantinePanel } from './views/quarantine-panel.ts';
 
 export interface ServerOptions {
   port: number;
@@ -98,6 +99,44 @@ export function startServer(bb: Blackboard, opts: Partial<ServerOptions> = {}) {
           const limit = parseInt(url.searchParams.get('limit') ?? '20', 10);
           const results = bb.eventQueries.search(query, { limit });
           return Response.json(results, { headers });
+        }
+
+        // API: Quarantine panel HTML
+        if (path === '/api/quarantine/panel') {
+          try {
+            const failedItems = bb.getFailedItems();
+            const html = renderQuarantinePanel(failedItems);
+            return new Response(html, {
+              headers: { ...headers, 'Content-Type': 'text/html' },
+            });
+          } catch (err) {
+            console.error('[quarantine/panel]', err);
+            return new Response('<p style="color:#f44336">Unable to load quarantine data.</p>', {
+              headers: { ...headers, 'Content-Type': 'text/html' },
+            });
+          }
+        }
+
+        // API: Retry a failed/quarantined work item
+        const retryMatch = path.match(/^\/api\/work-items\/([^/]+)\/retry$/);
+        if (retryMatch && req.method === 'POST') {
+          const itemId = decodeURIComponent(retryMatch[1]);
+          const item = bb.db
+            .query<{ item_id: string; status: string }>('SELECT item_id, status FROM work_items WHERE item_id = ?')
+            .get(itemId);
+
+          if (!item) {
+            return Response.json({ error: `Work item not found: ${itemId}` }, { status: 404, headers });
+          }
+          if (item.status !== 'failed' && item.status !== 'quarantined') {
+            return Response.json(
+              { error: `Work item is not failed or quarantined (status: ${item.status})` },
+              { status: 400, headers }
+            );
+          }
+
+          bb.requeueWorkItem(itemId);
+          return Response.json({ requeued: true, item_id: itemId }, { headers });
         }
 
         // API: SpecFlow features list (T-2.5)

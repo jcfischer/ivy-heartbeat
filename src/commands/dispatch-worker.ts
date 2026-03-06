@@ -518,7 +518,8 @@ export function registerDispatchWorkerCommand(
           bb.completeWorkItem(itemId, sessionId);
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
-          try { bb.releaseWorkItem(itemId, sessionId); } catch { /* best effort */ }
+          try { bb.failWorkItem(itemId, `Merge-fix failed: ${msg}`); } catch { /* best effort */ }
+          try { bb.releaseWorkItem(itemId, sessionId); } catch { /* item may be quarantined — best effort */ }
           bb.appendEvent({
             actorId: sessionId,
             targetId: itemId,
@@ -557,7 +558,8 @@ export function registerDispatchWorkerCommand(
           });
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
-          try { bb.releaseWorkItem(itemId, sessionId); } catch { /* best effort */ }
+          try { bb.failWorkItem(itemId, `Rework failed: ${msg}`); } catch { /* best effort */ }
+          try { bb.releaseWorkItem(itemId, sessionId); } catch { /* item may be quarantined — best effort */ }
           bb.appendEvent({
             actorId: sessionId,
             targetId: itemId,
@@ -630,7 +632,8 @@ export function registerDispatchWorkerCommand(
           });
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
-          try { bb.releaseWorkItem(itemId, sessionId); } catch { /* best effort */ }
+          try { bb.failWorkItem(itemId, `PR merge failed: ${msg}`); } catch { /* best effort */ }
+          try { bb.releaseWorkItem(itemId, sessionId); } catch { /* item may be quarantined — best effort */ }
           bb.appendEvent({
             actorId: sessionId,
             targetId: itemId,
@@ -1016,7 +1019,8 @@ export function registerDispatchWorkerCommand(
             }
           }
 
-          bb.releaseWorkItem(itemId, sessionId);
+          try { bb.failWorkItem(itemId, `Agent exited with code ${result.exitCode}`); } catch { /* best effort */ }
+          try { bb.releaseWorkItem(itemId, sessionId); } catch { /* item may be quarantined — best effort */ }
           bb.appendEvent({
             actorId: sessionId,
             targetId: itemId,
@@ -1033,7 +1037,8 @@ export function registerDispatchWorkerCommand(
         const msg = err instanceof Error ? err.message : String(err);
         const durationMs = Date.now() - startTime;
 
-        try { bb.releaseWorkItem(itemId, sessionId); } catch { /* best effort */ }
+        try { bb.failWorkItem(itemId, msg); } catch { /* best effort */ }
+        try { bb.releaseWorkItem(itemId, sessionId); } catch { /* item may be quarantined — best effort */ }
 
         bb.appendEvent({
           actorId: sessionId,

@@ -13,6 +13,7 @@ import { registerDispatchCommand } from './commands/dispatch.ts';
 import { registerDispatchWorkerCommand } from './commands/dispatch-worker.ts';
 import { registerSpecFlowQueueCommand } from './commands/specflow-queue.ts';
 import { registerSpecFlowPhaseWorkerCommand } from './commands/specflow-phase-worker.ts';
+import { registerRetryCommand } from './commands/retry.ts';
 
 export interface CliContext {
   bb: Blackboard;
@@ -57,5 +58,6 @@ registerDispatchCommand(program, getContext);
 registerDispatchWorkerCommand(program, getContext);
 registerSpecFlowQueueCommand(program, getContext);
 registerSpecFlowPhaseWorkerCommand(program, getContext);
+registerRetryCommand(program, getContext);
 
 program.parse();
