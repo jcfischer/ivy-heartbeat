@@ -63,11 +63,21 @@ export async function evaluateSpecFlowOrchestrate(item: ChecklistItem): Promise<
 
   const config = parseConfig(item);
 
+  // Register as a visible agent in ivy-blackboard for observability
+  let sessionId: string | null = null;
+  try {
+    const reg = bbAccessor.registerAgent({ name: 'SpecFlow Orchestrate' });
+    sessionId = reg.session_id;
+    bbAccessor.sendHeartbeat({ sessionId, progress: 'Starting orchestration cycle' });
+  } catch {
+    // Non-fatal — continue even if registration fails
+  }
+
   try {
     const result = await orchestrateSpecFlow(bbAccessor, {
       maxConcurrent: config.max_concurrent,
       phaseTimeoutMin: config.phase_timeout_min,
-    });
+    }, sessionId ?? undefined);
 
     const hasErrors = result.errors.length > 0;
     const status = hasErrors ? 'alert' : 'ok';
@@ -80,6 +90,13 @@ export async function evaluateSpecFlowOrchestrate(item: ChecklistItem): Promise<
       if (result.featuresAdvanced > 0) parts.push(`advanced ${result.featuresAdvanced}`);
       if (result.featuresReleased > 0) parts.push(`released ${result.featuresReleased}`);
       if (result.featuresFailed > 0) parts.push(`failed ${result.featuresFailed}`);
+    }
+
+    if (sessionId) {
+      try {
+        bbAccessor.sendHeartbeat({ sessionId, progress: parts.join(', ') });
+        bbAccessor.deregisterAgent(sessionId);
+      } catch { /* best effort */ }
     }
 
     return {
@@ -96,6 +113,9 @@ export async function evaluateSpecFlowOrchestrate(item: ChecklistItem): Promise<
     };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
+    if (sessionId) {
+      try { bbAccessor.deregisterAgent(sessionId); } catch { /* best effort */ }
+    }
     return {
       item,
       status: 'error',
