@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { existsSync } from 'node:fs';
 import { runSpecflowCli, parseEvalScore } from '../infra/specflow-cli.ts';
 import { resolveFeatureDirWithFallback } from '../utils/find-feature-dir.ts';
 
@@ -32,12 +33,16 @@ export interface QualityGateResult {
  * @param featureId - Feature ID
  * @param cliCwd - CWD for the specflow eval CLI (defaults to worktreePath).
  *   Pass the main project path to avoid git-worktree CWD issues with Claude CLI.
+ * @param projectPath - Main project path as fallback for artifact resolution.
+ *   If the artifact is not found in the worktree, it is looked up here.
+ *   Needed when specs were written to the main repo directly (e.g. manual recovery).
  */
 export async function checkQualityGate(
   worktreePath: string,
   phase: string,
   featureId: string,
   cliCwd?: string,
+  projectPath?: string,
 ): Promise<QualityGateResult> {
   const rubric = PHASE_RUBRICS[phase];
   const artifact = PHASE_ARTIFACTS[phase];
@@ -48,7 +53,20 @@ export async function checkQualityGate(
   }
 
   const specDir = join(worktreePath, '.specify', 'specs');
-  const featureDir = resolveFeatureDirWithFallback(worktreePath, featureId);
+  let featureDir = resolveFeatureDirWithFallback(worktreePath, featureId);
+
+  // Fallback: check main project path if artifact not found in worktree
+  if (projectPath && projectPath !== worktreePath) {
+    const candidateDir = featureDir;
+    const candidatePath = candidateDir ? join(candidateDir, artifact) : null;
+    if (!candidatePath || !existsSync(candidatePath)) {
+      const projectFeatureDir = resolveFeatureDirWithFallback(projectPath, featureId);
+      if (projectFeatureDir && existsSync(join(projectFeatureDir, artifact))) {
+        featureDir = projectFeatureDir;
+      }
+    }
+  }
+
   const artifactPath = featureDir
     ? join(featureDir, artifact)
     : join(specDir, featureId, artifact);

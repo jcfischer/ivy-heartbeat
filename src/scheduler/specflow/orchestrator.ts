@@ -333,7 +333,7 @@ async function checkGateAndAdvance(
   let gateDetails = 'auto-pass';
 
   if (gate === 'quality') {
-    const qr = await checkQualityGate(worktreePath, feature.phase, feature.feature_id, cliCwd);
+    const qr = await checkQualityGate(worktreePath, feature.phase, feature.feature_id, cliCwd, project?.local_path);
     passed = qr.passed;
     gateDetails = `score ${qr.score ?? 'n/a'}`;
     if (!passed) gateDetails += ' (below threshold)';
