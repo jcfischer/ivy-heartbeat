@@ -330,6 +330,21 @@ supertag trash <nodeId>
 `;
 
 /**
+ * Handle work item failure by recording the failure and releasing the item.
+ * Both operations are best-effort; failures are silently ignored to prevent
+ * cascading errors during error recovery.
+ */
+function handleWorkItemFailure(
+  bb: any,
+  itemId: string,
+  sessionId: string,
+  reason: string
+): void {
+  try { bb.failWorkItem(itemId, reason); } catch { /* best effort */ }
+  try { bb.releaseWorkItem(itemId, sessionId); } catch { /* item may be quarantined — best effort */ }
+}
+
+/**
  * Build the prompt for a Claude Code session working on a work item.
  * No git instructions — the dispatch worker handles all git operations.
  */
@@ -518,8 +533,7 @@ export function registerDispatchWorkerCommand(
           bb.completeWorkItem(itemId, sessionId);
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
-          try { bb.failWorkItem(itemId, `Merge-fix failed: ${msg}`); } catch { /* best effort */ }
-          try { bb.releaseWorkItem(itemId, sessionId); } catch { /* item may be quarantined — best effort */ }
+          handleWorkItemFailure(bb, itemId, sessionId, `Merge-fix failed: ${msg}`);
           bb.appendEvent({
             actorId: sessionId,
             targetId: itemId,
@@ -558,8 +572,7 @@ export function registerDispatchWorkerCommand(
           });
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
-          try { bb.failWorkItem(itemId, `Rework failed: ${msg}`); } catch { /* best effort */ }
-          try { bb.releaseWorkItem(itemId, sessionId); } catch { /* item may be quarantined — best effort */ }
+          handleWorkItemFailure(bb, itemId, sessionId, `Rework failed: ${msg}`);
           bb.appendEvent({
             actorId: sessionId,
             targetId: itemId,
@@ -632,8 +645,7 @@ export function registerDispatchWorkerCommand(
           });
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
-          try { bb.failWorkItem(itemId, `PR merge failed: ${msg}`); } catch { /* best effort */ }
-          try { bb.releaseWorkItem(itemId, sessionId); } catch { /* item may be quarantined — best effort */ }
+          handleWorkItemFailure(bb, itemId, sessionId, `PR merge failed: ${msg}`);
           bb.appendEvent({
             actorId: sessionId,
             targetId: itemId,
@@ -1019,8 +1031,7 @@ export function registerDispatchWorkerCommand(
             }
           }
 
-          try { bb.failWorkItem(itemId, `Agent exited with code ${result.exitCode}`); } catch { /* best effort */ }
-          try { bb.releaseWorkItem(itemId, sessionId); } catch { /* item may be quarantined — best effort */ }
+          handleWorkItemFailure(bb, itemId, sessionId, `Agent exited with code ${result.exitCode}`);
           bb.appendEvent({
             actorId: sessionId,
             targetId: itemId,
@@ -1037,8 +1048,7 @@ export function registerDispatchWorkerCommand(
         const msg = err instanceof Error ? err.message : String(err);
         const durationMs = Date.now() - startTime;
 
-        try { bb.failWorkItem(itemId, msg); } catch { /* best effort */ }
-        try { bb.releaseWorkItem(itemId, sessionId); } catch { /* item may be quarantined — best effort */ }
+        handleWorkItemFailure(bb, itemId, sessionId, msg);
 
         bb.appendEvent({
           actorId: sessionId,
