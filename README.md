@@ -50,7 +50,9 @@ ivy-heartbeat
 │   │
 │   ├── evaluators/            # Real evaluator implementations
 │   │   ├── calendar.ts        # macOS Calendar via ical CLI, conflict detection
-│   │   └── email.ts           # IMAP unread count, threshold alerting
+│   │   ├── email.ts           # IMAP unread count, threshold alerting
+│   │   ├── github-issues.ts   # GitHub issue watcher → work items
+│   │   └── github-pr-review.ts # PR review dispatch evaluator
 │   │
 │   ├── alert/                 # Alert delivery
 │   │   ├── dispatcher.ts      # Routes to channel handlers
@@ -91,21 +93,29 @@ ivy-heartbeat
 │   ├── scheduler/              # Autonomous dispatch pipeline
 │   │   ├── scheduler.ts        # Work item dispatch: claim → execute → complete
 │   │   ├── launcher.ts         # Claude Code launcher with Max OAuth auth
-│   │   ├── specflow-runner.ts  # SpecFlow phase orchestration (specify→plan→tasks→implement→complete)
+│   │   ├── specflow-runner.ts  # SpecFlow phase orchestration (legacy entry)
 │   │   ├── specflow-types.ts   # SpecFlow metadata types
 │   │   ├── review-agent.ts     # AI code review agent dispatch + result parsing
 │   │   ├── rework.ts           # Rework cycle management (review→fix→re-review)
 │   │   ├── pr-merge.ts         # Post-review PR merge automation
 │   │   ├── merge-fix.ts        # Merge conflict resolution agent
 │   │   ├── pr-comments.ts      # GitHub PR comment fetching for rework feedback
+│   │   ├── reflect.ts          # Post-session reflection extraction
+│   │   ├── reflect-handler.ts  # Reflection work item handler
 │   │   ├── worktree.ts         # Git worktree lifecycle management
-│   │   └── types.ts            # Scheduler types
+│   │   ├── types.ts            # Scheduler types
+│   │   └── specflow/           # Modular SpecFlow orchestrator
+│   │       ├── orchestrator.ts # Central phase state machine
+│   │       ├── phases/         # specify, plan, tasks, implement, complete executors
+│   │       ├── gates/          # quality-gate, code-gate validators
+│   │       ├── infra/          # specflow-cli, worktree helpers
+│   │       └── utils/          # find-feature-dir and shared utilities
 │   │
 │   └── repositories/          # Query repositories
 │       ├── events.ts          # getRecent, getSince, getByType, search
 │       └── heartbeats.ts      # getLatest, getRecent, getBySession
 │
-└── test/                      # 443 tests across 29 files
+└── test/                      # 580 tests across 39 files
 ```
 
 ## CLI Commands
@@ -132,6 +142,8 @@ ivy-heartbeat
 | `dispatch` | Dispatch pending work items to Claude Code agents |
 | `dispatch --timeout <min>` | Per-item timeout (default: 10 min) |
 | `dispatch --max <n>` | Max items to dispatch per run |
+| `retry <item-id>` | Requeue a failed or quarantined work item |
+| `specflow-queue` | Show SpecFlow feature queue and phase status |
 | `work list` | List work items with status |
 | `work show <id>` | Show work item details |
 
@@ -231,6 +243,8 @@ Claim work item → Create worktree → Launch agent → Post-agent git ops → 
 - `complete` phase runs specflow validation, commits artifacts, pushes branch, creates PR, and triggers the review pipeline
 - Quality gates evaluate plan/spec quality with model-based rubric grading (80% threshold)
 - Complete phase validation failures don't block PR creation — code gets reviewed regardless
+- `specflow_features` table in ivy-blackboard tracks feature lifecycle across projects for orchestrator chaining
+- Orchestrator mode (`SPECFLOW_ORCHESTRATOR=true`) advances features through the full pipeline automatically
 
 ## Dependencies
 
@@ -259,6 +273,7 @@ Environment variables:
 - `IVY_WORKTREE_DIR` — base directory for git worktrees (default: `~/.pai/worktrees`)
 - `IVY_LOG_DIR` — directory for dispatch agent logs (default: `~/.pai/blackboard/logs`)
 - `CLAUDE_CODE_OAUTH_TOKEN` — Max OAuth token for Claude Code subprocess authentication (suppresses `ANTHROPIC_API_KEY` in subprocess env)
+- `SPECFLOW_ORCHESTRATOR` — Set to `true` to enable orchestrator mode (syncs feature phases to specflow_features table)
 
 ## Contributing
 
