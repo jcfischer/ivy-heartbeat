@@ -304,21 +304,21 @@ export async function runRework(
       throw new Error(`Rework agent failed (exit ${result.exitCode})`);
     }
 
-    // Commit and push any remaining rework changes (agent may have already committed/pushed)
+    // Commit any remaining rework changes (agent may have already committed inside the session)
     const sha = await commitAll(
       wtPath,
       `Address review feedback for PR #${meta.pr_number} (cycle ${meta.rework_cycle})`
     );
 
-    if (sha) {
-      await pushBranch(wtPath, meta.branch);
-      bb.appendEvent({
-        actorId: sessionId,
-        targetId: item.item_id,
-        summary: `Rework: pushed fixes for PR #${meta.pr_number} (cycle ${meta.rework_cycle})`,
-        metadata: { commitSha: sha, prNumber: meta.pr_number },
-      });
-    }
+    // Always push — agent may have committed inside its session without pushing.
+    // If there's nothing ahead of the remote, git push is a safe no-op.
+    await pushBranch(wtPath, meta.branch);
+    bb.appendEvent({
+      actorId: sessionId,
+      targetId: item.item_id,
+      summary: `Rework: pushed fixes for PR #${meta.pr_number} (cycle ${meta.rework_cycle})${sha ? ` (commit ${sha})` : ' (agent committed internally)'}`,
+      metadata: { commitSha: sha ?? null, prNumber: meta.pr_number },
+    });
 
     // Always create re-review work item — agent may have committed/pushed directly
     const reviewItemId = `review-${meta.project_id}-pr-${meta.pr_number}-cycle-${meta.rework_cycle}`;
@@ -407,6 +407,7 @@ export function buildReworkPrompt(meta: ReworkMetadata): string {
     '   - Summarize what you changed and why',
     '',
     'IMPORTANT: Only fix the issues raised in the review. Do not refactor unrelated code.',
+    'IMPORTANT: Do NOT run git commit or git push. Leave all changes uncommitted — the system will commit and push after you finish.',
     'When done, summarize what you changed for each review comment.',
   );
 

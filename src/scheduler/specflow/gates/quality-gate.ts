@@ -74,7 +74,7 @@ export async function checkQualityGate(
   const result = await runSpecflowCli(
     ['eval', 'run', '--file', artifactPath, '--rubric', rubric, '--json'],
     cliCwd ?? worktreePath,
-    240_000,
+    360_000,
   );
 
   try {
