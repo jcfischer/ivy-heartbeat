@@ -856,6 +856,49 @@ export function registerDispatchWorkerCommand(
                   targetId: itemId,
                   summary: `Agent produced no changes for "${item.title}" — skipping PR`,
                 });
+
+                // Post a comment to the GitHub issue explaining why no changes were made
+                if (ghMeta.issueNumber) {
+                  try {
+                    const commentBody = [
+                      '🤖 An automated agent investigated this issue but produced no code changes.',
+                      '',
+                      'This typically means one of the following:',
+                      '- The issue description needs more specific details about what to change',
+                      '- The agent could not identify a clear, unambiguous fix',
+                      '- The issue may require human judgment or design decisions',
+                      '',
+                      'To make this issue actionable for automation, please provide:',
+                      '- Specific file paths or code locations to modify',
+                      '- Clear acceptance criteria',
+                      '- Examples of expected behavior',
+                      '',
+                      'A human developer should review this issue to determine next steps.',
+                    ].join('\n');
+
+                    const commentProc = Bun.spawn(
+                      ['gh', 'issue', 'comment', ghMeta.issueNumber.toString(), '--body', commentBody],
+                      { cwd: worktreePath, stdout: 'pipe', stderr: 'pipe' }
+                    );
+                    await commentProc.exited;
+
+                    if (commentProc.exitCode === 0) {
+                      bb.appendEvent({
+                        actorId: sessionId,
+                        targetId: itemId,
+                        summary: `Posted no-changes comment to issue #${ghMeta.issueNumber}`,
+                      });
+                    }
+                  } catch (commentErr: unknown) {
+                    const msg = commentErr instanceof Error ? commentErr.message : String(commentErr);
+                    bb.appendEvent({
+                      actorId: sessionId,
+                      targetId: itemId,
+                      summary: `Failed to post no-changes comment (non-fatal): ${msg}`,
+                      metadata: { error: msg },
+                    });
+                  }
+                }
               }
             } catch (gitErr: unknown) {
               const msg = gitErr instanceof Error ? gitErr.message : String(gitErr);
