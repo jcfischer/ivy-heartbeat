@@ -753,8 +753,19 @@ export function registerDispatchWorkerCommand(
                 `Fix #${ghMeta.issueNumber}: ${item.title}`
               );
 
-              if (sha) {
-                await pushBranch(worktreePath, branch);
+              // Always push — agent may have committed inside its session without pushing.
+              // If nothing is ahead of the remote, git push is a safe no-op.
+              await pushBranch(worktreePath, branch);
+
+              // Check whether there's anything on the branch beyond main (committed by us or the agent)
+              const hasChanges = sha !== null || await (async () => {
+                try {
+                  const result = await Bun.$`git log ${mainBranch}..HEAD --oneline`.cwd(worktreePath).quiet().text();
+                  return result.trim().length > 0;
+                } catch { return false; }
+              })();
+
+              if (hasChanges) {
 
                 const prBody = [
                   `Fixes #${ghMeta.issueNumber}`,
@@ -762,19 +773,33 @@ export function registerDispatchWorkerCommand(
                   `Automated fix for: ${item.title}`,
                 ].join('\n');
 
-                const pr = await createPR(
-                  worktreePath,
-                  `Fix #${ghMeta.issueNumber}: ${item.title}`,
-                  prBody,
-                  mainBranch
-                );
-
-                bb.appendEvent({
-                  actorId: sessionId,
-                  targetId: itemId,
-                  summary: `Created PR #${pr.number} for "${item.title}"`,
-                  metadata: { prNumber: pr.number, prUrl: pr.url, commitSha: sha },
-                });
+                // Check if a PR already exists for this branch (agent may have created it internally)
+                let pr: { number: number; url: string };
+                const existingPrJson = await Bun.$`gh pr view ${branch} --repo ${ghMeta.repo ?? ''} --json number,url`
+                  .cwd(worktreePath).quiet().text().catch(() => null);
+                if (existingPrJson) {
+                  const existing = JSON.parse(existingPrJson) as { number: number; url: string };
+                  pr = existing;
+                  bb.appendEvent({
+                    actorId: sessionId,
+                    targetId: itemId,
+                    summary: `Found existing PR #${pr.number} for "${item.title}" (created by agent)`,
+                    metadata: { prNumber: pr.number, prUrl: pr.url, commitSha: sha },
+                  });
+                } else {
+                  pr = await createPR(
+                    worktreePath,
+                    `Fix #${ghMeta.issueNumber}: ${item.title}`,
+                    prBody,
+                    mainBranch
+                  );
+                  bb.appendEvent({
+                    actorId: sessionId,
+                    targetId: itemId,
+                    summary: `Created PR #${pr.number} for "${item.title}"`,
+                    metadata: { prNumber: pr.number, prUrl: pr.url, commitSha: sha },
+                  });
+                }
 
                 // Route through PR review workflow.
                 // On approval, review-agent creates a merge work item only
