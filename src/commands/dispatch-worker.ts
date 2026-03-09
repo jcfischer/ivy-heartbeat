@@ -856,6 +856,27 @@ export function registerDispatchWorkerCommand(
                   targetId: itemId,
                   summary: `Agent produced no changes for "${item.title}" — skipping PR`,
                 });
+                // Post a comment to the GitHub issue so the reporter gets feedback
+                if (ghMeta?.isGithub && ghMeta.issueNumber && ghMeta.repo && worktreePath) {
+                  try {
+                    const noChangesComment = [
+                      `**Automated agent note:** An implementation agent investigated this issue but produced no code changes (exited successfully after ~${Math.round((Date.now() - startTime) / 60_000)} min).`,
+                      '',
+                      'This typically means the issue needs more specificity to be actionable:',
+                      '- Point to the exact file(s) and function(s) that need changing',
+                      '- Describe the desired behaviour change precisely',
+                      '- Include a minimal reproduction case if it\'s a bug',
+                    ].join('\n');
+                    await Bun.$`gh issue comment ${ghMeta.issueNumber} --repo ${ghMeta.repo} --body ${noChangesComment}`.cwd(worktreePath).quiet();
+                    bb.appendEvent({
+                      actorId: sessionId,
+                      targetId: itemId,
+                      summary: `Posted no-changes comment to issue #${ghMeta.issueNumber}`,
+                    });
+                  } catch {
+                    // Non-fatal
+                  }
+                }
               }
             } catch (gitErr: unknown) {
               const msg = gitErr instanceof Error ? gitErr.message : String(gitErr);
