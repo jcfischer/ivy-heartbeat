@@ -374,6 +374,29 @@ async function checkGateAndAdvance(
     });
     return true;
   } else {
+    // On quality gate failure, reset the worktree CLI DB back to the previous
+    // phase so the next retry actually re-runs the phase (not exits 0 silently).
+    // Without this, 'specflow plan' sees phase='plan' in the DB and exits 0
+    // without writing plan.md, causing "artifact missing" failures on retry.
+    if (gate === 'quality') {
+      const prevCliPhase: Record<string, string> = {
+        specifying: 'none',
+        planning: 'specify',
+      };
+      const resetTo = prevCliPhase[feature.phase];
+      if (resetTo) {
+        try {
+          const { runSpecflowCli } = await import('./infra/specflow-cli.ts');
+          const cliArgs = resetTo === 'none'
+            ? ['phase', feature.feature_id]
+            : ['phase', feature.feature_id, resetTo];
+          await runSpecflowCli(cliArgs, worktreePath, 10_000);
+        } catch {
+          // Non-fatal: log but don't block the failure update
+        }
+      }
+    }
+
     bb.updateFeature(feature.feature_id, {
       status: 'pending',
       failure_count: feature.failure_count + 1,

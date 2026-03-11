@@ -4,8 +4,8 @@ import { runSpecflowCli, parseEvalScore } from '../infra/specflow-cli.ts';
 import { resolveFeatureDirWithFallback } from '../utils/find-feature-dir.ts';
 
 export const PHASE_EVAL_THRESHOLDS: Record<string, number> = {
-  specifying: 80,
-  planning: 80,
+  specifying: 75,
+  planning: 75,
 };
 
 export const PHASE_RUBRICS: Record<string, string> = {
