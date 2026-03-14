@@ -385,6 +385,17 @@ export function buildReworkPrompt(meta: ReworkMetadata): string {
     '',
   ];
 
+  // Include structured blocking issues if available (ensures nothing is lost
+  // even if review_feedback was truncated to just the summary)
+  const unresolved = meta.blocking_issues?.filter(i => !i.resolved) ?? [];
+  if (unresolved.length > 0) {
+    parts.push('## Unresolved Blocking Issues', '');
+    for (const issue of unresolved) {
+      parts.push(`- **[${issue.severity.toUpperCase()}]** (cycle ${issue.cycle}): ${issue.description}`);
+    }
+    parts.push('');
+  }
+
   // Include structured inline comments if available
   if (meta.inline_comments && meta.inline_comments.length > 0) {
     parts.push(...formatInlineComments(meta.inline_comments));

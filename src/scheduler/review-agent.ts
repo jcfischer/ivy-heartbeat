@@ -417,6 +417,18 @@ export async function dispatchReviewAgent(
   // On changes_requested: create a rework work item so the feedback loop continues
   if (review.status === 'changes_requested' && existingMeta.repo && existingMeta.branch) {
     const nextCycle = (existingMeta.rework_cycle ?? 0) + 1;
+
+    // Build full feedback from blocking issues (not just summary).
+    // The summary is a one-liner that loses critical detail between cycles.
+    const feedbackParts = [review.summary];
+    const unresolvedIssues = allBlockingIssues.filter(i => !i.resolved);
+    if (unresolvedIssues.length > 0) {
+      feedbackParts.push('', '### Blocking Issues to Address', '');
+      for (const issue of unresolvedIssues) {
+        feedbackParts.push(`- **[${issue.severity.toUpperCase()}]** ${issue.description}`);
+      }
+    }
+
     createReworkWorkItem(bb, {
       prNumber: existingMeta.pr_number ?? ctx.prNumber,
       prUrl: existingMeta.pr_url ?? `https://github.com/${ctx.repo}/pull/${ctx.prNumber}`,
@@ -424,7 +436,7 @@ export async function dispatchReviewAgent(
       branch: existingMeta.branch ?? ctx.branch,
       mainBranch: existingMeta.main_branch ?? 'main',
       implementationWorkItemId: targetId,
-      reviewFeedback: review.summary,
+      reviewFeedback: feedbackParts.join('\n'),
       reworkCycle: nextCycle,
       projectId: item.project_id ?? '',
       originalTitle: item.title.replace(/^Code review:\s*/i, ''),
