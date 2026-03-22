@@ -11,6 +11,7 @@ import { setWatcherBlackboardAccessor, resetWatcherBlackboardAccessor } from '..
 import { setPrReviewBlackboardAccessor, resetPrReviewBlackboardAccessor } from '../evaluators/github-pr-review.ts';
 import { setCleanupBlackboard, resetCleanupBlackboard } from '../evaluators/specflow-cleanup.ts';
 import { setOrchestratorBlackboard, resetOrchestratorBlackboard } from '../evaluators/specflow-orchestrate.ts';
+import { setWatchdogBlackboard, resetWatchdogBlackboard } from '../evaluators/agent-watchdog.ts';
 import { releaseOrphanedFeatures } from '../scheduler/specflow/orchestrator.ts';
 import { setReviewCycleAccessor, resetReviewCycleAccessor } from '../scheduler/worktree.ts';
 import type {
@@ -103,6 +104,7 @@ export async function runChecks(
   setPrReviewBlackboardAccessor(bb);
   setCleanupBlackboard(bb);
   setOrchestratorBlackboard(bb);
+  setWatchdogBlackboard(bb);
   setReviewCycleAccessor(bb);
 
   const results: CheckResult[] = [];
@@ -178,6 +180,7 @@ export async function runChecks(
   resetPrReviewBlackboardAccessor();
   resetCleanupBlackboard();
   resetOrchestratorBlackboard();
+  resetWatchdogBlackboard();
   resetReviewCycleAccessor();
 
   return {

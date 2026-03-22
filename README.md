@@ -179,7 +179,7 @@ interval_minutes: 180
 ```​
 ```
 
-**Check types:** `calendar`, `email`, `custom`
+**Check types:** `calendar`, `email`, `github_issues`, `github_issue_watcher`, `github_pr_review`, `tana_todos`, `agent_dispatch`, `agent_watchdog`, `specflow_cleanup`, `specflow_orchestrate`, `custom`
 **Severity:** `low`, `medium`, `high`, `critical`
 **Channels:** `terminal`, `voice`, `email`
 
