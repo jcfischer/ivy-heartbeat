@@ -9,6 +9,7 @@ import { evaluateTanaTodos } from '../evaluators/tana-todos.ts';
 import { evaluateGithubIssueWatcher } from '../evaluators/github-issue-watcher.ts';
 import { evaluateGithubPrReview } from '../evaluators/github-pr-review.ts';
 import { evaluateSpecFlowOrchestrate } from '../evaluators/specflow-orchestrate.ts';
+import { evaluateAgentWatchdog } from '../evaluators/agent-watchdog.ts';
 
 export type Evaluator = (item: ChecklistItem) => Promise<CheckResult>;
 
@@ -29,6 +30,8 @@ const evaluators: Record<CheckType, Evaluator> = {
   tana_todos: evaluateTanaTodos,
 
   agent_dispatch: evaluateAgentDispatch,
+
+  agent_watchdog: evaluateAgentWatchdog,
 
   specflow_cleanup: evaluateSpecFlowCleanup,
 
