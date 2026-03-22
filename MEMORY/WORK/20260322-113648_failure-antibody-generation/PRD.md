@@ -7,11 +7,16 @@ progress: 13/13
 mode: interactive
 started: 2026-03-22T11:36:48+01:00
 updated: 2026-03-22T11:40:58+01:00
+note: Documentation of PAI Algorithm changes (external to ivy-heartbeat)
 ---
 
 ## Context
 
-GitHub Issue #50 requests integration of a "failure antibody" pattern inspired by AI Team OS's Failure Alchemy. The goal is to transform Algorithm LEARN phase reflections into proactive prevention rules stored in Tana that surface during future OBSERVE phases.
+GitHub Issue #50 (filed in ivy-heartbeat) requests integration of a "failure antibody" pattern inspired by AI Team OS's Failure Alchemy. The goal is to transform Algorithm LEARN phase reflections into proactive prevention rules stored in Tana that surface during future OBSERVE phases.
+
+**Important**: This implementation modifies `~/.claude/PAI/Algorithm/v3.7.0.md`, which exists **outside the ivy-heartbeat repository**. Issue #50 acknowledges this: "implementation spans the Algorithm template in `~/.claude/PAI/Algorithm/` and Tana memory integration."
+
+This PRD documents work completed in the PAI core repository, not ivy-heartbeat source code.
 
 Currently, Algorithm reflections are stored as JSONL entries in `~/.claude/MEMORY/LEARNING/REFLECTIONS/algorithm-reflections.jsonl`. These are mined periodically via MineReflections but don't proactively surface during work that could benefit from them.
 
@@ -59,10 +64,21 @@ This feature adds two integration points:
 
 ## Decisions
 
+## Architectural Note
+
+This implementation lives in `~/.claude/PAI/Algorithm/v3.7.0.md` (PAI core), not in ivy-heartbeat source code. Ivy-heartbeat is a monitoring system and does not contain the PAI Algorithm itself.
+
+**Repository Status:**
+- Changes made: `~/.claude/PAI/Algorithm/v3.7.0.md` (modified but not committed)
+- PAI repository: git repository at `~/.claude/PAI`
+- This PR: Documents completed work; does not include implementation
+
+**Recommendation:** Move issue #50 to the PAI core repository or close as completed externally.
+
 ## Verification
 
 ### ISC-1 through ISC-8: LEARN phase antibody generation
-**Evidence:** Algorithm v3.7.0.md lines 390-432 contain complete antibody generation section
+**Evidence:** Algorithm v3.7.0.md lines 390-432 contain complete antibody generation section (in PAI core repository)
 - When to generate / when not to generate criteria (lines 392-400)
 - Generation process with 4 steps (lines 402-407)
 - JSON format example with all required fields (lines 411-422)
