@@ -1,8 +1,10 @@
 import type { ChecklistItem } from '../parser/types.ts';
 import type { CheckResult } from '../check/types.ts';
 import type { Blackboard } from '../blackboard.ts';
+import type { BlackboardWorkItem } from 'ivy-blackboard/src/types';
 import { sweepStaleAgents, type SweepConfig } from 'ivy-blackboard/src/sweep';
 import { requeueWorkItem, getFailedItems } from 'ivy-blackboard/src/work';
+import { getPRState } from '../scheduler/worktree.ts';
 
 interface AgentWatchdogConfig {
   stuckThresholdMinutes: number;
@@ -14,6 +16,29 @@ function parseWatchdogConfig(item: ChecklistItem): AgentWatchdogConfig {
     stuckThresholdMinutes: typeof item.config.stuck_threshold_minutes === 'number' ? item.config.stuck_threshold_minutes : 30,
     maxRetries: typeof item.config.max_retries === 'number' ? item.config.max_retries : 2,
   };
+}
+
+/**
+ * Extract PR number and project path from a work item's metadata.
+ * Returns null if the item has no PR association.
+ */
+function extractPRInfo(item: BlackboardWorkItem, bb: Blackboard): { prNumber: number; projectPath: string } | null {
+  if (!item.metadata) return null;
+  try {
+    const meta = JSON.parse(item.metadata);
+    const prNumber = meta.pr_number;
+    if (typeof prNumber !== 'number') return null;
+
+    // Resolve project path from the work item's project association
+    const projectId = item.project_id;
+    if (!projectId) return null;
+    const project = bb.getProject(projectId);
+    if (!project?.local_path) return null;
+
+    return { prNumber, projectPath: project.local_path };
+  } catch {
+    return null;
+  }
 }
 
 // ─── Injectable blackboard accessor (set by runner) ──────────────────────
@@ -61,10 +86,20 @@ export async function evaluateAgentWatchdog(item: ChecklistItem): Promise<CheckR
       (item) => item.status === 'failed' && (item.failure_count ?? 0) < config.maxRetries
     );
 
-    // Requeue retriable failed tasks
+    // Requeue retriable failed tasks (skip items whose PR is already merged/closed)
     const requeuedTasks: string[] = [];
+    const skippedStale: string[] = [];
     for (const failedItem of retriableItems) {
       try {
+        // Check if this item is PR-related and the PR is no longer open
+        const prInfo = extractPRInfo(failedItem, bbRef);
+        if (prInfo) {
+          const prState = await getPRState(prInfo.projectPath, prInfo.prNumber);
+          if (prState === 'MERGED' || prState === 'CLOSED') {
+            skippedStale.push(failedItem.item_id);
+            continue;
+          }
+        }
         requeueWorkItem(bbRef.db, failedItem.item_id);
         requeuedTasks.push(failedItem.item_id);
       } catch (err: unknown) {
@@ -90,6 +125,9 @@ export async function evaluateAgentWatchdog(item: ChecklistItem): Promise<CheckR
     if (requeuedCount > 0) {
       summaryParts.push(`${requeuedCount} failed task(s) requeued`);
     }
+    if (skippedStale.length > 0) {
+      summaryParts.push(`${skippedStale.length} stale task(s) skipped (PR merged/closed)`);
+    }
 
     const summary = summaryParts.length > 0
       ? `Agent watchdog: ${item.name} — ${summaryParts.join(', ')}`
@@ -103,12 +141,14 @@ export async function evaluateAgentWatchdog(item: ChecklistItem): Promise<CheckR
         staleAgentCount,
         releasedItemCount,
         requeuedCount,
+        skippedStaleCount: skippedStale.length,
         staleAgents: sweepResult.staleAgents.map((a) => ({
           sessionId: a.sessionId,
           agentName: a.agentName,
           releasedItems: a.releasedItems,
         })),
         requeuedTasks: requeuedTasks.map((id) => ({ itemId: id })),
+        skippedStaleTasks: skippedStale.map((id) => ({ itemId: id })),
       },
     };
   } catch (err: unknown) {
