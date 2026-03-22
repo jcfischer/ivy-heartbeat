@@ -12,6 +12,7 @@ import {
   ensureBranch,
   commitAll,
   pushBranch,
+  getPRState,
 } from './worktree.ts';
 
 /**
@@ -264,6 +265,19 @@ export async function runRework(
   launcher: SessionLauncher,
   timeoutMs: number,
 ): Promise<void> {
+  // Guard: skip rework if the PR is already merged or closed.
+  // Return early — caller (scheduler) handles completeWorkItem.
+  const prState = await getPRState(project.local_path, meta.pr_number);
+  if (prState === 'MERGED' || prState === 'CLOSED') {
+    bb.appendEvent({
+      actorId: sessionId,
+      targetId: item.item_id,
+      summary: `Skipping rework for PR #${meta.pr_number} — PR is ${prState.toLowerCase()}`,
+      metadata: { prNumber: meta.pr_number, prState, reason: `pr_already_${prState.toLowerCase()}` },
+    });
+    return;
+  }
+
   const rwWorktreePath = resolveWorktreePath(project.local_path, meta.branch, meta.project_id);
   let didStash = false;
   let wtPath: string;

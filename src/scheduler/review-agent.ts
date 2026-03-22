@@ -5,6 +5,7 @@ import type { BlackboardWorkItem } from 'ivy-blackboard/src/types';
 import { getLauncher, logPathForSession } from './launcher.ts';
 import { createReworkWorkItem } from './rework.ts';
 import { createPRMergeWorkItem } from './pr-merge.ts';
+import { getPRState } from './worktree.ts';
 import type { BlockingIssue } from './types.ts';
 
 interface ReviewContext {
@@ -323,6 +324,19 @@ export async function dispatchReviewAgent(
   sessionId: string,
   timeoutMs: number = 10 * 60 * 1000, // 10 min default
 ): Promise<{ success: boolean; reviewStatus: string }> {
+  // Guard: skip review if the PR is already merged or closed
+  const prState = await getPRState(ctx.projectPath, ctx.prNumber);
+  if (prState === 'MERGED' || prState === 'CLOSED') {
+    bb.appendEvent({
+      actorId: sessionId,
+      targetId: item.item_id,
+      summary: `Skipping code review for PR #${ctx.prNumber} — PR is ${prState.toLowerCase()}`,
+      metadata: { prNumber: ctx.prNumber, prState, reason: `pr_already_${prState.toLowerCase()}` },
+    });
+    bb.completeWorkItem(item.item_id, sessionId);
+    return { success: true, reviewStatus: `skipped_${prState.toLowerCase()}` };
+  }
+
   const launcher = getLauncher();
   const prompt = buildReviewPrompt(ctx);
 
