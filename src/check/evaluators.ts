@@ -10,6 +10,7 @@ import { evaluateGithubIssueWatcher } from '../evaluators/github-issue-watcher.t
 import { evaluateGithubPrReview } from '../evaluators/github-pr-review.ts';
 import { evaluateSpecFlowOrchestrate } from '../evaluators/specflow-orchestrate.ts';
 import { evaluateAgentWatchdog } from '../evaluators/agent-watchdog.ts';
+import { evaluateLadderBridge } from '../evaluators/ladder-bridge.ts';
 
 export type Evaluator = (item: ChecklistItem) => Promise<CheckResult>;
 
@@ -36,6 +37,8 @@ const evaluators: Record<CheckType, Evaluator> = {
   specflow_cleanup: evaluateSpecFlowCleanup,
 
   specflow_orchestrate: evaluateSpecFlowOrchestrate,
+
+  ladder_bridge: evaluateLadderBridge,
 
   custom: async (item) => ({
     item,
