@@ -52,7 +52,8 @@ ivy-heartbeat
 │   │   ├── calendar.ts        # macOS Calendar via ical CLI, conflict detection
 │   │   ├── email.ts           # IMAP unread count, threshold alerting
 │   │   ├── github-issues.ts   # GitHub issue watcher → work items
-│   │   └── github-pr-review.ts # PR review dispatch evaluator
+│   │   ├── github-pr-review.ts # PR review dispatch evaluator
+│   │   └── experiment-tracker.ts # Ladder experiment monitoring
 │   │
 │   ├── alert/                 # Alert delivery
 │   │   ├── dispatcher.ts      # Routes to channel handlers
@@ -178,6 +179,17 @@ max_unread: 10
 interval_minutes: 180
 ```​
 
+## Ladder Experiment Tracker
+```yaml
+type: experiment_tracker
+severity: medium
+channels: [terminal]
+enabled: true
+description: Monitor active Ladder experiments for completion or metric drift
+ladder_dir: ~/work/sandbox/Ladder
+interval_minutes: 1440
+```​
+
 ## Ladder Bridge Sync
 ```yaml
 type: ladder_bridge
@@ -190,7 +202,7 @@ interval_minutes: 1440
 ```​
 ```
 
-**Check types:** `calendar`, `email`, `github_issues`, `github_issue_watcher`, `github_pr_review`, `tana_todos`, `agent_dispatch`, `agent_watchdog`, `specflow_cleanup`, `specflow_orchestrate`, `ladder_bridge`, `custom`
+**Check types:** `calendar`, `email`, `github_issues`, `github_issue_watcher`, `github_pr_review`, `tana_todos`, `agent_dispatch`, `agent_watchdog`, `specflow_cleanup`, `specflow_orchestrate`, `experiment_tracker`, `ladder_bridge`, `custom`
 **Severity:** `low`, `medium`, `high`, `critical`
 **Channels:** `terminal`, `voice`, `email`
 
