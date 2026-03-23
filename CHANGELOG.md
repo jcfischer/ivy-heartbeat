@@ -5,6 +5,7 @@ All notable changes to ivy-heartbeat are documented here.
 ## [Unreleased]
 
 ### Added
+- **F-030 Experiment tracker evaluator** — `experiment_tracker` check type monitors active Ladder experiments via `Tools/experiment-tracker.ts`, alerts when experiments reach session targets or metrics drift (Issue #54)
 - **F-028 dead-letter-queue-typed-failure-states**: The merge-fix loop (issue #41) is the canonical failure: a transient `gh pr merge` failure creates a merge-fix work item, which also fails, and the loop never terminates. The blackboard has no:
 - **F-028 dead-letter-queue-typed-failure-states**: The merge-fix loop (issue #41) is the canonical failure: a transient `gh pr merge` failure creates a merge-fix work item, which also fails, and the loop never terminates. The blackboard has no:
 - **F-028 dead-letter-queue-typed-failure-states**: The merge-fix loop (issue #41) is the canonical failure: a transient `gh pr merge` failure creates a merge-fix work item, which also fails, and the loop never terminates. The blackboard has no:
