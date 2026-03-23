@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { evaluateLadderBridge, setBridgeExecutor, resetBridgeExecutor } from './ladder-bridge.ts';
+import { evaluateLadderBridge, setBridgeExecutor, resetBridgeExecutor } from '../src/evaluators/ladder-bridge.ts';
 import type { ChecklistItem } from '../parser/types.ts';
 
 describe('evaluateLadderBridge', () => {

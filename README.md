@@ -185,7 +185,7 @@ severity: low
 channels: [terminal]
 enabled: true
 description: Import new PAI signals into Ladder pipeline
-ladder_dir: ~/work/sandbox/Ladder
+ladder_dir: /Users/username/work/sandbox/Ladder
 interval_minutes: 1440
 ```​
 ```
