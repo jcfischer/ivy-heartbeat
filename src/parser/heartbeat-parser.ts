@@ -4,7 +4,7 @@ import { ChecklistItemSchema, type ChecklistItem } from './types.ts';
 
 const KNOWN_FIELDS = new Set(['type', 'severity', 'channels', 'enabled', 'description']);
 
-function resolvePath(path: string): string {
+export function resolvePath(path: string): string {
   return path.replace(/^~/, process.env.HOME || '');
 }
 

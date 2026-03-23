@@ -1,6 +1,7 @@
 import type { ChecklistItem } from '../parser/types.ts';
 import type { CheckResult } from '../check/types.ts';
 import { resolve } from 'path';
+import { resolvePath } from '../parser/heartbeat-parser.ts';
 
 interface ExperimentMetric {
   current: string | number;
@@ -38,7 +39,7 @@ export function parseExperimentTrackerConfig(item: ChecklistItem): ExperimentTra
   return {
     ladderDir:
       typeof item.config.ladder_dir === 'string'
-        ? resolve(item.config.ladder_dir.replace(/^~/, process.env.HOME || '~'))
+        ? resolve(resolvePath(item.config.ladder_dir))
         : defaultLadderDir,
   };
 }
