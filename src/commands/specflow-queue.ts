@@ -253,14 +253,25 @@ export function registerSpecFlowQueueCommand(
         }
       }
 
-      // Register/update the feature in specflow_features for orchestrator tracking
-      // This ensures the orchestrator can manage it and respects dependsOn
+      // Register/update the feature in specflow_features for orchestrator tracking.
+      // Map the detected startPhase to the orchestrator's completed-phase equivalent
+      // so the ADVANCE_MAP routes to the correct next phase.
+      // e.g. startPhase="plan" means specify is done → set phase="specified"
+      //      so ADVANCE_MAP["specified"] → "planning" (correct next step)
+      const phaseForOrchestrator: Record<string, string> = {
+        specify: 'queued',      // nothing done yet → orchestrator starts at specifying
+        plan: 'specified',      // spec exists → orchestrator advances to planning
+        tasks: 'planned',       // plan exists → orchestrator advances to tasking
+        implement: 'tasked',    // tasks exist → orchestrator advances to implementing
+      };
       const dependsOn: string | undefined = opts.dependsOn;
       try {
         bb.upsertFeature({
           feature_id: opts.feature,
           project_id: opts.project,
           title: opts.feature,
+          phase: phaseForOrchestrator[startPhase] ?? 'queued',
+          status: 'pending',
           ...(dependsOn ? { dependsOn } : {}),
         });
       } catch {

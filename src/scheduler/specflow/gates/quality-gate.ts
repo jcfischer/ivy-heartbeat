@@ -22,6 +22,8 @@ export interface QualityGateResult {
   passed: boolean;
   score: number;
   reason: string;
+  /** Raw eval output for retry feedback — includes per-criterion scores and comments */
+  evalFeedback?: string;
 }
 
 /**
@@ -80,12 +82,37 @@ export async function checkQualityGate(
   try {
     const score = parseEvalScore(result.stdout);
     const passed = score >= threshold;
+
+    // Extract per-criterion feedback from eval JSON for retry context
+    let evalFeedback: string | undefined;
+    if (!passed) {
+      try {
+        const parsed = JSON.parse(result.stdout);
+        const testResult = parsed.results?.[0];
+        if (testResult?.criteria) {
+          // Format failing criteria as actionable feedback
+          const failing = testResult.criteria
+            .filter((c: { passed?: boolean; score?: number }) => !c.passed || (c.score !== undefined && c.score < 0.7))
+            .map((c: { name?: string; comment?: string; score?: number }) =>
+              `- ${c.name ?? 'unknown'}: ${c.comment ?? `score ${c.score}`}`)
+            .join('\n');
+          if (failing) evalFeedback = `Weak areas:\n${failing}`;
+        }
+        if (!evalFeedback && testResult?.feedback) {
+          evalFeedback = testResult.feedback;
+        }
+      } catch {
+        // Non-fatal — score-only feedback is still useful
+      }
+    }
+
     return {
       passed,
       score,
       reason: passed
         ? `Score ${score} >= threshold ${threshold}`
         : `Score ${score} below threshold ${threshold}`,
+      evalFeedback,
     };
   } catch {
     if (result.exitCode !== 0) {

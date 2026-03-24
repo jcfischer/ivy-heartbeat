@@ -87,10 +87,10 @@ export abstract class BasePhaseExecutor implements PhaseExecutor {
     }
     try { unlinkSync(promptFile); } catch {}
 
-    // Step 3: Build the full prompt for Claude
-    const fullPrompt = this.buildFullPrompt(promptData);
+    // Step 3: Build the full prompt for Claude, including retry feedback if available
+    const fullPrompt = this.buildFullPrompt(promptData, feature);
 
-    // Step 4: Launch Claude session
+    // Step 4: Launch Claude session with PAI context enabled
     bb.appendEvent({
       actorId: sessionId,
       targetId: featureId,
@@ -121,14 +121,35 @@ export abstract class BasePhaseExecutor implements PhaseExecutor {
 
   /**
    * Build the full prompt for Claude, combining system context with the main prompt.
+   * Includes retry feedback when a previous attempt failed a quality gate.
    * Subclasses can override this if they need custom prompt formatting.
    */
-  protected buildFullPrompt(promptData: { prompt: string; systemPrompt?: string }): string {
+  protected buildFullPrompt(
+    promptData: { prompt: string; systemPrompt?: string },
+    feature?: SpecFlowFeature,
+  ): string {
+    // Build retry feedback section if this is a retry after a quality gate failure
+    let retryFeedback = '';
+    if (feature && feature.failure_count > 0 && feature.last_error) {
+      retryFeedback = [
+        '',
+        `## RETRY CONTEXT (attempt ${feature.failure_count + 1})`,
+        '',
+        `Previous attempt failed quality evaluation: ${feature.last_error}`,
+        feature.last_phase_error ? `Phase error details: ${feature.last_phase_error}` : '',
+        '',
+        'IMPORTANT: Address the quality issues from the previous attempt.',
+        'Produce a more thorough, detailed, and well-structured artifact.',
+        'Focus on depth, specificity, and actionable technical detail.',
+        '',
+      ].filter(Boolean).join('\n');
+    }
+
     return [
       promptData.systemPrompt ? `[System Context] ${promptData.systemPrompt}` : '',
       'IMPORTANT: You have full tool access. Write the artifact file directly to disk using the Write tool.',
       `After creating the file, output [PHASE COMPLETE: ${this.phaseName.toUpperCase()}] in your response.`,
-      '',
+      retryFeedback,
       promptData.prompt,
     ].filter(Boolean).join('\n');
   }

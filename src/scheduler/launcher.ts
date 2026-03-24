@@ -238,7 +238,9 @@ async function defaultLauncher(opts: LaunchOptions): Promise<LaunchResult> {
   const env: Record<string, string | undefined> = {
     ...process.env,
     CLAUDECODE: undefined,
-    SPECFLOW_CODING_AGENT: '1', // Signal hooks to skip full PAI Algorithm context
+    // PAI context (CLAUDE.md, Algorithm, hooks) is ON by default.
+    // Only suppress when explicitly requested via disablePaiContext: true.
+    ...(opts.disablePaiContext === true ? { SPECFLOW_CODING_AGENT: '1' } : {}),
     // When OAuth token is available, suppress ANTHROPIC_API_KEY to force OAuth auth.
     // The `claude` CLI is Bun-compiled with --compile-autoload-dotenv, so it loads
     // .env from its CWD. Target projects may have a depleted ANTHROPIC_API_KEY in

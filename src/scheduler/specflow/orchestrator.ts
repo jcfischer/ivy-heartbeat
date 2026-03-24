@@ -341,9 +341,10 @@ async function checkGateAndAdvance(
 
   let passed = true;
   let gateDetails = 'auto-pass';
+  let qr: Awaited<ReturnType<typeof checkQualityGate>> | undefined;
 
   if (gate === 'quality') {
-    const qr = await checkQualityGate(worktreePath, feature.phase, feature.feature_id, cliCwd, project?.local_path);
+    qr = await checkQualityGate(worktreePath, feature.phase, feature.feature_id, cliCwd, project?.local_path);
     passed = qr.passed;
     gateDetails = `score ${qr.score ?? 'n/a'}`;
     if (!passed) gateDetails += ' (below threshold)';
@@ -411,6 +412,9 @@ async function checkGateAndAdvance(
       status: 'pending',
       failure_count: feature.failure_count + 1,
       last_error: `Gate "${gate}" failed: ${gateDetails}`,
+      // Store eval feedback for retry prompts — the base executor includes this
+      // in the prompt so Claude knows what to improve on the next attempt
+      ...(gate === 'quality' && qr?.evalFeedback ? { last_phase_error: qr.evalFeedback } : {}),
     });
     return false;
   }
