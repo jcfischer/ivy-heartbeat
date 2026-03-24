@@ -66,12 +66,16 @@ function isFeatureRequest(issue: GithubIssue, featureRequestLabels: string[]): b
 }
 
 /**
- * Extract owner/repo from a GitHub URL.
- * Handles: https://github.com/owner/repo, https://github.com/owner/repo.git
+ * Extract owner/repo from a GitHub URL or shorthand.
+ * Handles: https://github.com/owner/repo, https://github.com/owner/repo.git,
+ *          git@github.com:owner/repo, owner/repo (shorthand)
  */
 export function extractOwnerRepo(repoUrl: string): string | null {
   const match = repoUrl.match(/github\.com[/:]([^/]+\/[^/.]+)/);
-  return match ? match[1] : null;
+  if (match) return match[1];
+  // Support bare owner/repo shorthand (e.g. "jcfischer/pii-pseudonymizer")
+  const shorthand = repoUrl.match(/^([^/\s]+\/[^/\s.]+)$/);
+  return shorthand ? shorthand[1] : null;
 }
 
 // ─── Injectable fetcher (for testing) ────────────────────────────────────
@@ -255,7 +259,7 @@ export async function evaluateGithubIssues(item: ChecklistItem): Promise<CheckRe
   try {
     const projects = bbAccessor.listProjects();
     const githubProjects = projects.filter(
-      (p) => p.remote_repo && p.remote_repo.includes('github.com')
+      (p) => p.remote_repo && extractOwnerRepo(p.remote_repo) !== null
     );
 
     if (githubProjects.length === 0) {

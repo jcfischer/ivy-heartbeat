@@ -114,6 +114,14 @@ describe('extractOwnerRepo', () => {
   test('returns null for empty string', () => {
     expect(extractOwnerRepo('')).toBeNull();
   });
+
+  test('extracts from bare owner/repo shorthand', () => {
+    expect(extractOwnerRepo('jcfischer/pii-pseudonymizer')).toBe('jcfischer/pii-pseudonymizer');
+  });
+
+  test('returns null for bare string without slash', () => {
+    expect(extractOwnerRepo('just-a-name')).toBeNull();
+  });
 });
 
 describe('evaluateGithubIssues', () => {
