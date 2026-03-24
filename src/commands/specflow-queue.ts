@@ -56,6 +56,7 @@ export function registerSpecFlowQueueCommand(
     .requiredOption('--project <id>', 'Project ID (must have specflow_enabled)')
     .requiredOption('--feature <id>', 'SpecFlow feature ID (e.g., F-019)')
     .option('--priority <n>', 'Priority level', 'P2')
+    .option('--depends-on <ids>', 'Comma-separated feature IDs this feature depends on (e.g., F-001 or projectId:F-001)')
     .action(async (opts) => {
       const ctx = getContext();
       const bb = ctx.bb;
@@ -252,6 +253,20 @@ export function registerSpecFlowQueueCommand(
         }
       }
 
+      // Register/update the feature in specflow_features for orchestrator tracking
+      // This ensures the orchestrator can manage it and respects dependsOn
+      const dependsOn: string | undefined = opts.dependsOn;
+      try {
+        bb.upsertFeature({
+          feature_id: opts.feature,
+          project_id: opts.project,
+          title: opts.feature,
+          ...(dependsOn ? { dependsOn } : {}),
+        });
+      } catch {
+        // Non-fatal — orchestrator tracking is best-effort when feature already exists
+      }
+
       // Create work item
       const itemId = `specflow-${opts.feature}-${startPhase}`;
       const metadata = {
@@ -270,18 +285,20 @@ export function registerSpecFlowQueueCommand(
           sourceRef: opts.feature,
           priority: opts.priority,
           metadata: JSON.stringify(metadata),
+          ...(dependsOn ? { dependsOn } : {}),
         });
 
         bb.appendEvent({
           targetId: itemId,
-          summary: `Queued SpecFlow feature ${opts.feature} for dispatch (${startPhase} phase)`,
-          metadata: { featureId: opts.feature, projectId: opts.project, phase: startPhase, existingArtifacts: detected.found },
+          summary: `Queued SpecFlow feature ${opts.feature} for dispatch (${startPhase} phase)${dependsOn ? ` — depends on: ${dependsOn}` : ''}`,
+          metadata: { featureId: opts.feature, projectId: opts.project, phase: startPhase, existingArtifacts: detected.found, dependsOn },
         });
 
         if (ctx.json) {
-          console.log(JSON.stringify({ itemId, feature: opts.feature, phase: startPhase, existingArtifacts: detected.found }));
+          console.log(JSON.stringify({ itemId, feature: opts.feature, phase: startPhase, existingArtifacts: detected.found, dependsOn: dependsOn ?? null }));
         } else {
           console.log(`Queued: ${opts.feature} → ${startPhase} phase (item: ${itemId})`);
+          if (dependsOn) console.log(`Dependencies: ${dependsOn}`);
           console.log('The next dispatch cycle will pick it up.');
         }
       } catch (err: unknown) {

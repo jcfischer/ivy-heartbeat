@@ -35,6 +35,7 @@ function makeFeature(overrides: Partial<SpecFlowFeature> = {}): SpecFlowFeature 
     updated_at: new Date().toISOString(),
     phase_started_at: null,
     completed_at: null,
+    depends_on: null,
     ...overrides,
   };
 }
@@ -223,6 +224,55 @@ describe('determineAction', () => {
         max_failures: 3,
       }));
       expect(action.type).toBe('wait'); // blocked wins
+    });
+  });
+
+  describe('feature dependencies (depsComplete parameter)', () => {
+    it('returns wait when depsComplete is false', () => {
+      const action = determineAction(
+        makeFeature({ phase: 'queued', status: 'pending' }),
+        20,
+        false,
+      );
+      expect(action.type).toBe('wait');
+      expect((action as { reason: string }).reason).toBe('waiting for dependencies');
+    });
+
+    it('proceeds normally when depsComplete is true', () => {
+      const action = determineAction(
+        makeFeature({ phase: 'queued', status: 'pending' }),
+        20,
+        true,
+      );
+      expect(action.type).toBe('advance');
+    });
+
+    it('dependency wait takes priority before blocked status check', () => {
+      // A feature that is both deps-incomplete and status=blocked:
+      // the deps check fires first (terminal is still checked before deps)
+      const action = determineAction(
+        makeFeature({ phase: 'specifying', status: 'pending' }),
+        20,
+        false,
+      );
+      expect(action.type).toBe('wait');
+      expect((action as { reason: string }).reason).toBe('waiting for dependencies');
+    });
+
+    it('terminal state takes priority over depsComplete=false', () => {
+      const action = determineAction(
+        makeFeature({ phase: 'completed', status: 'pending' }),
+        20,
+        false,
+      );
+      expect(action.type).toBe('wait');
+      expect((action as { reason: string }).reason).toBe('terminal state');
+    });
+
+    it('defaults depsComplete to true (backward compatible)', () => {
+      // No third argument — should behave as before
+      const action = determineAction(makeFeature({ phase: 'queued', status: 'pending' }));
+      expect(action.type).toBe('advance');
     });
   });
 });

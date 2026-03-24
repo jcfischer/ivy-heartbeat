@@ -12,6 +12,7 @@ import { registerServeCommand } from './commands/serve.ts';
 import { registerDispatchCommand } from './commands/dispatch.ts';
 import { registerDispatchWorkerCommand } from './commands/dispatch-worker.ts';
 import { registerSpecFlowQueueCommand } from './commands/specflow-queue.ts';
+import { registerSpecFlowBundleCommand } from './commands/specflow-bundle.ts';
 import { registerSpecFlowPhaseWorkerCommand } from './commands/specflow-phase-worker.ts';
 import { registerRetryCommand } from './commands/retry.ts';
 
@@ -57,6 +58,7 @@ registerServeCommand(program, getContext);
 registerDispatchCommand(program, getContext);
 registerDispatchWorkerCommand(program, getContext);
 registerSpecFlowQueueCommand(program, getContext);
+registerSpecFlowBundleCommand(program, getContext);
 registerSpecFlowPhaseWorkerCommand(program, getContext);
 registerRetryCommand(program, getContext);
 

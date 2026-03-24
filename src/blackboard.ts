@@ -50,6 +50,8 @@ import {
   upsertFeature,
   listFeatures,
   getActionableFeatures,
+  checkFeatureDependenciesComplete,
+  unblockDependentFeatures,
   type CreateFeatureInput,
   type ListFeaturesOptions,
 } from 'ivy-blackboard/src/specflow-features';
@@ -228,6 +230,16 @@ export class Blackboard {
 
   getActionableFeatures(maxConcurrent: number): SpecFlowFeature[] {
     return getActionableFeatures(this.db, maxConcurrent);
+  }
+
+  checkFeatureDependenciesComplete(featureId: string, dependsOn?: string | null): boolean {
+    const feature = getFeature(this.db, featureId);
+    const deps = dependsOn !== undefined ? dependsOn : (feature?.depends_on ?? null);
+    return checkFeatureDependenciesComplete(this.db, featureId, deps);
+  }
+
+  unblockDependentFeatures(completedFeatureId: string): number {
+    return unblockDependentFeatures(this.db, completedFeatureId);
   }
 
   close(): void {

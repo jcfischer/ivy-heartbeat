@@ -54,14 +54,24 @@ function isStale(phaseStartedAt: string | null, timeoutMin: number): boolean {
 /**
  * Determine what action the orchestrator should take for a given feature.
  * Pure function — no side effects.
+ *
+ * @param depsComplete - Whether all feature-level dependencies are satisfied.
+ *   Pass false to block a feature that has unmet depends_on entries.
+ *   Defaults to true for backward compatibility (no-dependency features).
  */
 export function determineAction(
   feature: SpecFlowFeature,
   timeoutMin: number = DEFAULT_PHASE_TIMEOUT_MIN,
+  depsComplete: boolean = true,
 ): OrchestratorAction {
   // Terminal states
   if (feature.phase === 'completed' || feature.phase === 'failed') {
     return { type: 'wait', reason: 'terminal state' };
+  }
+
+  // Feature-level dependency not yet satisfied
+  if (!depsComplete) {
+    return { type: 'wait', reason: 'waiting for dependencies' };
   }
 
   // Blocked — needs human intervention
@@ -444,10 +454,6 @@ async function runPhase(
     return { advanced: false, failed: true, error: `Worktree setup failed: ${err}` };
   }
 
-  // Per-phase timeout (ms): implementing gets up to 3h, others 20min
-  const PHASE_TIMEOUT_MAP: Record<string, number> = {
-    specifying: 20, planning: 20, tasking: 20, implementing: 180, completing: 20,
-  };
   const phaseTimeoutMs = (PHASE_TIMEOUT_MAP[feature.phase] ?? config.phaseTimeoutMin) * 60_000;
 
   // Mark feature as active before spawning so the orchestrator won't double-dispatch
@@ -540,7 +546,8 @@ export async function orchestrateSpecFlow(
     // (up to 60 min each) on instant transitions like advance and gate checks.
     let current: SpecFlowFeature | null = feature;
     while (current) {
-      const action = determineAction(current, config.phaseTimeoutMin);
+      const depsComplete = bb.checkFeatureDependenciesComplete(current.feature_id, current.depends_on);
+      const action = determineAction(current, config.phaseTimeoutMin, depsComplete);
       let continueWithFeature = false;
 
       try {
@@ -593,6 +600,19 @@ export async function orchestrateSpecFlow(
             const gateAdvanced = await checkGateAndAdvance(current, bb, sid);
             if (gateAdvanced) {
               result.featuresAdvanced++;
+              // If the feature just reached completed phase, unblock any dependents
+              const fresh = bb.getFeature(current.feature_id);
+              if (fresh?.phase === 'completed') {
+                const unblocked = bb.unblockDependentFeatures(current.feature_id);
+                if (unblocked > 0) {
+                  bb.appendEvent({
+                    actorId: sid,
+                    targetId: current.feature_id,
+                    summary: `Feature ${current.feature_id} completed — unblocked ${unblocked} dependent feature(s)`,
+                    metadata: { completedFeatureId: current.feature_id, unblocked },
+                  });
+                }
+              }
               continueWithFeature = true; // gate passed → advance to next phase immediately
             }
             break;
