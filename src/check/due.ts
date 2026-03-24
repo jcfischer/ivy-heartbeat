@@ -14,11 +14,11 @@ export function isDue(item: ChecklistItem, bb: Blackboard): DueCheckResult {
       ? item.config.interval_minutes
       : DEFAULT_INTERVAL_MINUTES;
 
-  // Find the most recent event for this specific check
-  const events = bb.eventQueries.getByType('heartbeat_received', { limit: 50 });
-  const lastEvent = events.find(
-    (e) => e.metadata && e.metadata.includes(`"checkName":"${item.name}"`)
-  );
+  // Find the most recent event for this specific check.
+  // Query by metadata match in SQL to avoid the limit-50 window problem:
+  // checks with long intervals (e.g. 1440m) would get pushed out of a
+  // small event window and re-trigger as "never run".
+  const lastEvent = bb.findLastEventByCheckName(item.name);
 
   if (!lastEvent) {
     return { item, isDue: true, lastRun: null, reason: 'never run' };

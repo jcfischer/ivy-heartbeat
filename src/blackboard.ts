@@ -206,6 +206,24 @@ export class Blackboard {
       );
   }
 
+  /**
+   * Find the most recent heartbeat_received event for a specific check name.
+   * Uses SQL metadata filtering to avoid the limit-window problem where
+   * infrequent checks (e.g. interval_minutes: 1440) get pushed out of
+   * a small event window and re-trigger as "never run".
+   */
+  findLastEventByCheckName(checkName: string): BlackboardEvent | null {
+    return this.db
+      .prepare(
+        `SELECT * FROM events
+         WHERE event_type = 'heartbeat_received'
+           AND metadata LIKE ?
+         ORDER BY timestamp DESC
+         LIMIT 1`
+      )
+      .get(`%"checkName":"${checkName}"%`) as BlackboardEvent | null;
+  }
+
   // ─── SpecFlow features (delegated to ivy-blackboard) ─────────────────
 
   createFeature(input: CreateFeatureInput): SpecFlowFeature {
