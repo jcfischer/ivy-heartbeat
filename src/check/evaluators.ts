@@ -12,6 +12,7 @@ import { evaluateSpecFlowOrchestrate } from '../evaluators/specflow-orchestrate.
 import { evaluateAgentWatchdog } from '../evaluators/agent-watchdog.ts';
 import { evaluateExperimentTracker } from '../evaluators/experiment-tracker.ts';
 import { evaluateLadderBridge } from '../evaluators/ladder-bridge.ts';
+import { evaluateMycelia } from '../evaluators/mycelia.ts';
 
 export type Evaluator = (item: ChecklistItem) => Promise<CheckResult>;
 
@@ -42,6 +43,8 @@ const evaluators: Record<CheckType, Evaluator> = {
   experiment_tracker: evaluateExperimentTracker,
 
   ladder_bridge: evaluateLadderBridge,
+
+  mycelia: evaluateMycelia,
 
   custom: async (item) => ({
     item,
