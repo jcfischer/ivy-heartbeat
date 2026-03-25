@@ -211,8 +211,17 @@ function ensureSpecflowInWorktree(worktreePath: string, projectPath: string): vo
         symlinkSync(relative(worktreeSpecflowDir, join(sourceSpecflowDir, 'evals.db')), evalsDest);
       }
     }
-  } catch {
-    // Non-fatal — specflow will fall back or fail with a clear error
+  } catch (err) {
+    console.error(`[specflow-orchestrator] Failed to symlink .specflow into worktree: ${err}`);
+  }
+
+  // Verify: if features.db still isn't accessible, throw so the orchestrator
+  // fails fast instead of burning a retry on a broken worktree
+  if (!existsSync(join(worktreeSpecflowDir, 'features.db'))) {
+    throw new Error(
+      `Failed to make .specflow/features.db available in worktree at ${worktreeSpecflowDir}. ` +
+      `Source: ${sourceSpecflowDir}, worktree: ${worktreePath}`
+    );
   }
 }
 

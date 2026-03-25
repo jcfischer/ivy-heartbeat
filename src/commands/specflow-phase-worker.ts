@@ -73,6 +73,39 @@ export function registerSpecFlowPhaseWorkerCommand(
         process.exit(1);
       }
 
+      // Ensure .specflow/features.db is accessible in the worktree.
+      // The orchestrator symlinks it, but if the worktree was reused or the
+      // symlink broke, re-create it here before any specflow CLI calls.
+      const { existsSync: exists, mkdirSync: mkdir, symlinkSync: symlink } = await import('node:fs');
+      const { join, relative, dirname } = await import('node:path');
+      const wtSpecflow = join(worktreePath, '.specflow');
+      const srcSpecflow = join(project.local_path, '.specflow');
+      if (exists(join(srcSpecflow, 'features.db')) && !exists(join(wtSpecflow, 'features.db'))) {
+        try {
+          if (!exists(wtSpecflow)) {
+            mkdir(dirname(wtSpecflow), { recursive: true });
+            symlink(relative(dirname(wtSpecflow), srcSpecflow), wtSpecflow, 'dir');
+          } else {
+            symlink(relative(wtSpecflow, join(srcSpecflow, 'features.db')), join(wtSpecflow, 'features.db'));
+          }
+          console.error(`[specflow-phase-worker] Repaired .specflow symlink in worktree`);
+        } catch (symlinkErr) {
+          bb.updateFeature(featureId, {
+            status: 'pending',
+            current_session: null,
+            // Don't increment failure_count for infrastructure issues
+            last_error: `Failed to symlink .specflow into worktree: ${symlinkErr}`,
+          });
+          bb.appendEvent({
+            actorId: sessionId,
+            targetId: featureId,
+            summary: `[phase-worker] Infrastructure failure: .specflow symlink broken for ${featureId}`,
+            metadata: { error: String(symlinkErr), worktreePath, srcSpecflow },
+          });
+          process.exit(1);
+        }
+      }
+
       const executor = EXECUTORS.find(e => e.canRun(feature));
       if (!executor) {
         bb.updateFeature(featureId, {
