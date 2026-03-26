@@ -12,6 +12,7 @@ import { setPrReviewBlackboardAccessor, resetPrReviewBlackboardAccessor } from '
 import { setCleanupBlackboard, resetCleanupBlackboard } from '../evaluators/specflow-cleanup.ts';
 import { setOrchestratorBlackboard, resetOrchestratorBlackboard } from '../evaluators/specflow-orchestrate.ts';
 import { setWatchdogBlackboard, resetWatchdogBlackboard } from '../evaluators/agent-watchdog.ts';
+import { setMyceliaBlackboardAccessor, resetMyceliaBlackboardAccessor } from '../evaluators/mycelia.ts';
 import { releaseOrphanedFeatures } from '../scheduler/specflow/orchestrator.ts';
 import { setReviewCycleAccessor, resetReviewCycleAccessor } from '../scheduler/worktree.ts';
 import type {
@@ -105,6 +106,7 @@ export async function runChecks(
   setCleanupBlackboard(bb);
   setOrchestratorBlackboard(bb);
   setWatchdogBlackboard(bb);
+  setMyceliaBlackboardAccessor(bb);
   setReviewCycleAccessor(bb);
 
   const results: CheckResult[] = [];
@@ -181,6 +183,7 @@ export async function runChecks(
   resetCleanupBlackboard();
   resetOrchestratorBlackboard();
   resetWatchdogBlackboard();
+  resetMyceliaBlackboardAccessor();
   resetReviewCycleAccessor();
 
   return {

@@ -22,43 +22,56 @@ interface MyceliaRequest {
   expires_at: string;
 }
 
+interface MyceliaResponse {
+  id: string;
+  responder_id: string;
+  responder_name: string;
+  body: string;
+  confidence: number;
+  created_at: string;
+}
+
+interface MyceliaRequestDetail {
+  id: string;
+  requester_id: string;
+  title: string;
+  body: string;
+  request_type: string;
+  status: string;
+  response_count: number;
+  max_responses: number;
+  created_at: string;
+  expires_at: string;
+  responses: MyceliaResponse[];
+}
+
 interface MyceliaApiResponse {
   ok: boolean;
   data?: {
     requests?: MyceliaRequest[];
+    request?: MyceliaRequestDetail;
     agent?: { trust_score: number; request_count: number; response_count: number };
   };
 }
 
-// ─── Injectable fetcher (for testing) ───────────────────────────────────────
+export type MyceliaBlackboardAccessor = {
+  findLastEventByCheckName(checkName: string): { metadata: string | null } | null;
+  appendEvent(opts: {
+    summary: string;
+    metadata?: Record<string, unknown>;
+  }): void;
+};
 
-export type MyceliaFetcher = (command: string[]) => Promise<MyceliaApiResponse | null>;
+// ─── Injectable API fetcher (for testing) ──────────────────────────────────
 
-let myceliaFetcher: MyceliaFetcher = defaultMyceliaFetcher;
+export type MyceliaApiFetcher = (path: string, configPath: string) => Promise<MyceliaApiResponse | null>;
 
-async function defaultMyceliaFetcher(command: string[]): Promise<MyceliaApiResponse | null> {
-  try {
-    const proc = Bun.spawn(['bun', 'run', ...command], {
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
-
-    const output = await new Response(proc.stdout).text();
-    await proc.exited;
-
-    if (proc.exitCode !== 0) return null;
-
-    // The CLI outputs formatted text, not JSON. Use the API directly.
-    return null;
-  } catch {
-    return null;
-  }
-}
+let apiFetcher: MyceliaApiFetcher = defaultApiFetcher;
 
 /**
  * Fetch from Mycelia API directly using the config file.
  */
-async function fetchMyceliaApi(path: string, configPath: string): Promise<MyceliaApiResponse | null> {
+async function defaultApiFetcher(path: string, configPath: string): Promise<MyceliaApiResponse | null> {
   try {
     const configFile = Bun.file(configPath);
     if (!await configFile.exists()) return null;
@@ -75,12 +88,16 @@ async function fetchMyceliaApi(path: string, configPath: string): Promise<Myceli
   }
 }
 
-export function setMyceliaFetcher(fetcher: MyceliaFetcher): void {
-  myceliaFetcher = fetcher;
+async function fetchMyceliaApi(path: string, configPath: string): Promise<MyceliaApiResponse | null> {
+  return apiFetcher(path, configPath);
+}
+
+export function setMyceliaFetcher(fetcher: MyceliaApiFetcher): void {
+  apiFetcher = fetcher;
 }
 
 export function resetMyceliaFetcher(): void {
-  myceliaFetcher = defaultMyceliaFetcher;
+  apiFetcher = defaultApiFetcher;
 }
 
 // ─── Email notification ─────────────────────────────────────────────────────
@@ -109,6 +126,18 @@ export function setEmailSender(sender: EmailSender): void {
 
 export function resetEmailSender(): void {
   emailSender = defaultEmailSender;
+}
+
+// ─── Blackboard accessor ─────────────────────────────────────────────────
+
+let bbAccessor: MyceliaBlackboardAccessor | null = null;
+
+export function setMyceliaBlackboardAccessor(accessor: MyceliaBlackboardAccessor): void {
+  bbAccessor = accessor;
+}
+
+export function resetMyceliaBlackboardAccessor(): void {
+  bbAccessor = null;
 }
 
 // ─── Config parsing ─────────────────────────────────────────────────────────
@@ -175,21 +204,108 @@ export async function evaluateMycelia(item: ChecklistItem): Promise<CheckResult>
       }
     }
 
-    // Build alert details
-    const claimableCount = claimable.length;
-    const claimableTitles = claimable.map((r) =>
-      `• ${r.title} (${r.request_type}, ${r.response_count}/${r.max_responses} responses)`
-    );
+    // Load previous state from blackboard (if available)
+    let previousSeenIds: string[] = [];
+    let previousResponseCounts: Record<string, number> = {};
 
-    if (claimableCount > 0) {
-      const summary = `Mycelia: ${claimableCount} open request${claimableCount > 1 ? 's' : ''} available to claim`;
+    if (bbAccessor) {
+      const lastEvent = bbAccessor.findLastEventByCheckName(item.name);
+      if (lastEvent?.metadata) {
+        try {
+          const metadata = JSON.parse(lastEvent.metadata);
+          previousSeenIds = metadata.seenRequestIds ?? [];
+          previousResponseCounts = metadata.responseCountsByRequestId ?? {};
+        } catch {
+          // Ignore parse errors
+        }
+      }
+    }
+
+    // Deduplicate claimable requests — only alert on new ones
+    const currentIds = claimable.map((r) => r.id);
+    const newRequests = claimable.filter((r) => !previousSeenIds.includes(r.id));
+    const newCount = newRequests.length;
+
+    // Check our own requests for new responses
+    const ourRequests = requests.filter((r) => r.requester_id === config.agentId);
+    const newResponses: Array<{ request: MyceliaRequestDetail; newResponseCount: number }> = [];
+
+    for (const req of ourRequests) {
+      const previousCount = previousResponseCounts[req.id] ?? 0;
+      if (req.response_count > previousCount) {
+        // Fetch full request details to get response bodies
+        const detailData = await fetchMyceliaApi(`/v1/requests/${req.id}`, config.clientPath);
+        if (detailData?.ok && detailData.data?.request) {
+          newResponses.push({
+            request: detailData.data.request,
+            newResponseCount: req.response_count - previousCount,
+          });
+        }
+      }
+    }
+
+    // Update response count tracking
+    const updatedResponseCounts: Record<string, number> = {};
+    for (const req of ourRequests) {
+      updatedResponseCounts[req.id] = req.response_count;
+    }
+
+    // Save state to blackboard for next check
+    if (bbAccessor) {
+      bbAccessor.appendEvent({
+        summary: `Mycelia check: ${newCount} new claimable, ${newResponses.length} new responses`,
+        metadata: {
+          checkName: item.name,
+          seenRequestIds: currentIds,
+          responseCountsByRequestId: updatedResponseCounts,
+          newClaimableCount: newCount,
+          newResponseCount: newResponses.length,
+        },
+      });
+    }
+
+    // Handle new responses first
+    if (newResponses.length > 0 && config.emailTo) {
+      for (const { request, newResponseCount } of newResponses) {
+        const emailSubject = `[Mycelia] ${newResponseCount} new response${newResponseCount > 1 ? 's' : ''} to: ${request.title}`;
+
+        const responseSections = request.responses.slice(-newResponseCount).map((resp) => {
+          return [
+            `From: ${resp.responder_name}`,
+            `Confidence: ${resp.confidence}/10`,
+            ``,
+            resp.body,
+            ``,
+            `---`,
+          ].join('\n');
+        });
+
+        const emailBody = [
+          `Your request "${request.title}" received ${newResponseCount} new response${newResponseCount > 1 ? 's' : ''}:\n`,
+          ...responseSections,
+          '',
+          `To rate responses, tell Ivy: "mycelia rate [RESPONSE_ID]"`,
+          `View full request: https://mycelia.fyi/requests/${request.id}`,
+        ].join('\n');
+
+        await emailSender(config.emailTo, emailSubject, emailBody);
+      }
+    }
+
+    // Handle new claimable requests
+    if (newCount > 0) {
+      const summary = `Mycelia: ${newCount} NEW request${newCount > 1 ? 's' : ''} available to claim`;
+
+      const newTitles = newRequests.map((r) =>
+        `• ${r.title} (${r.request_type}, ${r.response_count}/${r.max_responses} responses)`
+      );
 
       // Send email notification if configured
       if (config.emailTo) {
-        const emailSubject = `[Mycelia] ${claimableCount} request${claimableCount > 1 ? 's' : ''} available`;
+        const emailSubject = `[Mycelia] ${newCount} NEW request${newCount > 1 ? 's' : ''} available`;
         const emailBody = [
-          `${claimableCount} open request${claimableCount > 1 ? 's' : ''} on the Mycelia network:\n`,
-          ...claimableTitles,
+          `${newCount} new request${newCount > 1 ? 's' : ''} on the Mycelia network:\n`,
+          ...newTitles,
           '',
           'To claim, tell Ivy: "check mycelia" or "mycelia browse"',
         ].join('\n');
@@ -203,8 +319,26 @@ export async function evaluateMycelia(item: ChecklistItem): Promise<CheckResult>
         summary,
         details: {
           configured: true,
-          claimableCount,
-          claimable: claimableTitles,
+          claimableCount: claimable.length,
+          newClaimableCount: newCount,
+          newClaimable: newTitles,
+          newResponseCount: newResponses.length,
+          trustScore,
+        },
+      };
+    }
+
+    // No new claimable requests, but check for new responses
+    if (newResponses.length > 0) {
+      return {
+        item,
+        status: 'alert',
+        summary: `Mycelia: ${newResponses.length} new response${newResponses.length > 1 ? 's' : ''} to your requests`,
+        details: {
+          configured: true,
+          claimableCount: claimable.length,
+          newClaimableCount: 0,
+          newResponseCount: newResponses.length,
           trustScore,
         },
       };
@@ -213,10 +347,12 @@ export async function evaluateMycelia(item: ChecklistItem): Promise<CheckResult>
     return {
       item,
       status: 'ok',
-      summary: `Mycelia: no claimable requests. Trust: ${trustScore ?? 'unknown'}`,
+      summary: `Mycelia: no new activity. Trust: ${trustScore ?? 'unknown'}`,
       details: {
         configured: true,
-        claimableCount: 0,
+        claimableCount: claimable.length,
+        newClaimableCount: 0,
+        newResponseCount: 0,
         trustScore,
       },
     };
